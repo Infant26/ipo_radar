@@ -191,7 +191,11 @@ export default function Dashboard() {
     () =>
       (data?.ipos ?? [])
         .filter((i) => i.status === "closed" || i.status === "listed")
-        .sort((a, b) => (b.closeDate ?? "").localeCompare(a.closeDate ?? "")),
+        .sort(
+          (a, b) =>
+            Number(a.status === "listed") - Number(b.status === "listed") ||
+            (b.listingDate ?? b.closeDate ?? "").localeCompare(a.listingDate ?? a.closeDate ?? ""),
+        ),
     [data],
   );
 
@@ -372,33 +376,86 @@ export default function Dashboard() {
               ))}
             </section>
           ) : (
-            <section className="list past">
-              <div className="row head">
-                <span>IPO</span>
-                <span className="r">Price</span>
-                <span className="r">GMP</span>
-                <span className="r">Subscribed</span>
-                <span className="r">Listing</span>
-              </div>
-              {pastList.map((ipo) => (
-                <div className="row" key={ipo.id}>
-                  <div className="name">
-                    <a href={ipo.url ?? undefined} target="_blank" rel="noreferrer">
-                      {ipo.name}
-                    </a>
-                    <span className={`chip s-${ipo.status}`}>
-                      {ipo.statusCode === "LP" ? "Listed ↑" : ipo.statusCode === "LN" ? "Listed ↓" : statusLabel[ipo.status]}
-                    </span>
-                  </div>
-                  <span className="r num" data-l="Price">{inr(ipo.price)}</span>
-                  <span className={`r num ${tone(ipo.gmp)}`} data-l="GMP">
-                    {inr(ipo.gmp, 2)} <small>{pct(ipo.gmpPct)}</small>
-                  </span>
-                  <span className="r num" data-l="Subscribed">{x(ipo.subscription.total)}</span>
-                  <span className="r muted" data-l="Listing">{timing(ipo)}</span>
+            <>
+              <GmpTrack ipos={pastList} />
+              <section className="list past">
+                <div className="row head">
+                  <span>IPO</span>
+                  <span className="r">Issue price</span>
+                  <span className="r">Final GMP</span>
+                  <span className="r">Listed at</span>
+                  <span className="r">vs GMP</span>
+                  <span className="r">Profit / lot</span>
+                  <span className="r">Subscribed</span>
                 </div>
-              ))}
-            </section>
+                {pastList.length === 0 && (
+                  <p className="empty">No recently closed or listed mainboard IPOs. They appear here once bidding ends.</p>
+                )}
+                {pastList.map((ipo) => {
+                  const L = ipo.listing;
+                  const finalGmp = ipo.gmpAtListing ?? ipo.gmp;
+                  return (
+                    <div className="row" key={ipo.id}>
+                      <div className="name">
+                        <a href={ipo.url ?? undefined} target="_blank" rel="noreferrer">
+                          {ipo.name}
+                        </a>
+                        <span className="meta">
+                          <span className={`chip s-${ipo.status}`}>
+                            {ipo.status === "listed" ? "Listed" : "Awaiting listing"}
+                          </span>
+                          <span className="muted">{timing(ipo)}</span>
+                        </span>
+                      </div>
+                      <div className="r" data-l="Issue price">
+                        <span className="num">{inr(ipo.price)}</span>
+                      </div>
+                      <div className="r" data-l="Final GMP">
+                        <span className={`num ${tone(finalGmp)}`}>{inr(finalGmp, 2)}</span>
+                        <span className="num small muted nowrap">
+                          {L?.expectedPct != null ? pct(L.expectedPct) : pct(ipo.gmpPct)}
+                          {ipo.gmpAtClose !== null && ` · ${inr(ipo.gmpAtClose, 2)} at close`}
+                        </span>
+                      </div>
+                      <div className="r" data-l="Listed at">
+                        {L ? (
+                          <>
+                            <span className="num">{inr(L.price, 2)}</span>
+                            <span className={`num small ${tone(L.gainPct)}`}>{pct(L.gainPct)}</span>
+                          </>
+                        ) : (
+                          <span className="small muted">Expected {inr(ipo.estListing, 2)}</span>
+                        )}
+                      </div>
+                      <div className="r" data-l="vs GMP">
+                        {L?.gapPts != null ? (
+                          <>
+                            <span className={`num ${Math.abs(L.gapPts) <= 5 ? "muted" : tone(L.gapPts)}`}>
+                              {L.gapPts >= 0 ? "+" : ""}
+                              {L.gapPts.toFixed(1)} pts
+                            </span>
+                            <span className="small muted">
+                              {Math.abs(L.gapPts) <= 5 ? "In line" : L.gapPts > 0 ? "Beat GMP" : "Below GMP"}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="small muted">–</span>
+                        )}
+                      </div>
+                      <div className="r" data-l="Profit / lot">
+                        <span className={`num ${tone(L?.profitPerLot ?? ipo.profitPerLot)}`}>
+                          {inr(L?.profitPerLot ?? ipo.profitPerLot)}
+                        </span>
+                        <span className="small muted">{L ? "Actual" : "Expected"}</span>
+                      </div>
+                      <div className="r" data-l="Subscribed">
+                        <span className="num">{x(ipo.subscription.total)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            </>
           )}
 
           <footer className="foot">
@@ -418,6 +475,10 @@ export default function Dashboard() {
               <strong>GMP moves:</strong> the small ▲/▼ badge beside a GMP is the last change since you last
               refreshed in this browser, and it stays until the GMP moves again. The line underneath compares
               today’s GMP with the last one logged before today, so it’s the same on every device.
+            </p>
+            <p>
+              <strong>Closed &amp; listed</strong> compares each listing with its final GMP (the last one before
+              listing): “vs GMP” is the actual listing gain minus the gain GMP implied, in percentage points.
             </p>
             <p>
               Both scores leave out data that isn’t available rather than scoring it as zero. Click any row to see the
@@ -757,6 +818,62 @@ function IpoRow({
         </div>
       )}
     </div>
+  );
+}
+
+/** How well the final GMP predicted actual listings, across the recent ones shown. */
+function GmpTrack({ ipos }: { ipos: Ipo[] }) {
+  const done = ipos.filter((i) => i.listing?.expectedPct != null) as (Ipo & {
+    listing: NonNullable<Ipo["listing"]> & { expectedPct: number; gapPts: number };
+  })[];
+  if (done.length < 3) return null;
+
+  const n = done.length;
+  const above = ipos.filter((i) => i.listing && i.listing.gainPct > 0).length;
+  const listedCount = ipos.filter((i) => i.listing).length;
+  // "Direction": GMP of 1%+ means it called a gain; below that, a flat or negative listing
+  const rightWay = done.filter((i) =>
+    i.listing.expectedPct >= 1 ? i.listing.gainPct > 0 : i.listing.gainPct <= 1,
+  ).length;
+  const gaps = done.map((i) => i.listing.gapPts);
+  const meanGap = gaps.reduce((a, b) => a + b, 0) / n;
+  const abs = gaps.map(Math.abs).sort((a, b) => a - b);
+  const medianMiss = n % 2 ? abs[n >> 1] : (abs[n / 2 - 1] + abs[n / 2]) / 2;
+  const inLine = gaps.filter((g) => Math.abs(g) <= 5).length;
+  const biggest = [...done].sort((a, b) => Math.abs(b.listing.gapPts) - Math.abs(a.listing.gapPts))[0];
+
+  return (
+    <section className="track" aria-label="How accurate GMP has been">
+      <h2>How accurate GMP has been</h2>
+      <p className="muted">Final GMP vs actual listing, last {n} mainboard listings</p>
+      <dl className="track-stats">
+        <div>
+          <dt>Called the direction</dt>
+          <dd className="num">{rightWay} of {n}</dd>
+          <span className="muted">gain vs flat or loss</span>
+        </div>
+        <div>
+          <dt>Within 5 pts of GMP</dt>
+          <dd className="num">{inLine} of {n}</dd>
+          <span className="muted">typical miss ±{medianMiss.toFixed(1)} pts</span>
+        </div>
+        <div>
+          <dt>On average, listings were</dt>
+          <dd className={`num ${tone(meanGap)}`}>
+            {Math.abs(meanGap).toFixed(1)} pts {meanGap >= 0 ? "above" : "below"}
+          </dd>
+          <span className="muted">what GMP implied</span>
+        </div>
+        <div>
+          <dt>Listed above issue price</dt>
+          <dd className="num">{above} of {listedCount}</dd>
+          <span className="muted">
+            biggest miss: {biggest.name} {biggest.listing.gapPts >= 0 ? "+" : ""}
+            {biggest.listing.gapPts.toFixed(0)} pts
+          </span>
+        </div>
+      </dl>
+    </section>
   );
 }
 

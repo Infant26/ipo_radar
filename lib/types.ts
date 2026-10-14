@@ -31,6 +31,12 @@ export interface Ipo {
   gmpLow: number | null;
   gmpHigh: number | null;
   gmpUpdatedAt: string | null;
+  /** GMP the source recorded on the opening day, closing day and listing day */
+  gmpAtOpen: number | null;
+  gmpAtClose: number | null;
+  gmpAtListing: number | null;
+  /** Actual listing-day result, once listed */
+  listing: ListingResult | null;
   /** InvestorGain's GMP log, newest first (one closing entry per day plus today's latest) */
   gmpHistory: GmpPoint[];
   /** Change vs the last GMP recorded before today */
@@ -85,6 +91,17 @@ export interface FundamentalsData {
   promoterPre: number | null;
   promoterPost: number | null;
   marketCapCr: number | null;
+}
+
+export interface ListingResult {
+  price: number;
+  /** actual listing gain over the issue price, % */
+  gainPct: number;
+  /** what the final GMP implied, %; null when there was no GMP */
+  expectedPct: number | null;
+  /** actual minus expected, percentage points */
+  gapPts: number | null;
+  profitPerLot: number | null;
 }
 
 export interface GmpPoint {

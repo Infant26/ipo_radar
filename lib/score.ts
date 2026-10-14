@@ -12,7 +12,8 @@ type RawIpo = Omit<
   | "fundamentals"
   | "gmpHistory"
   | "gmpDayChange"
->;
+  | "listing"
+> & { listingPrice?: number | null; listingGainPct?: number | null };
 
 const clamp = (v: number, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, v));
 /** log-scaled 0..1 where `target` maps to 1 */
@@ -143,6 +144,23 @@ function dayChange(gmp: number | null, history: GmpPoint[]): Ipo["gmpDayChange"]
   return prev ? { since: dayOf(prev.at)!, from: prev.gmp!, change: gmp - prev.gmp! } : null;
 }
 
+/** Compare the actual listing with what the final GMP implied. */
+function listingResult(ipo: RawIpo): Ipo["listing"] {
+  const { listingPrice, listingGainPct, price } = ipo;
+  if (listingPrice == null || !price) return null;
+  const gainPct = listingGainPct ?? ((listingPrice - price) / price) * 100;
+  // The last GMP before listing; "--" on the day usually means it had fallen to zero
+  const finalGmp = ipo.gmpAtListing ?? ipo.gmp;
+  const expectedPct = finalGmp !== null ? (finalGmp / price) * 100 : null;
+  return {
+    price: listingPrice,
+    gainPct,
+    expectedPct,
+    gapPts: expectedPct !== null ? gainPct - expectedPct : null,
+    profitPerLot: ipo.lot ? (listingPrice - price) * ipo.lot : null,
+  };
+}
+
 export function enrich(ipo: RawIpo, detail?: DetailData | null): Ipo {
   const estListing = ipo.price && ipo.gmp !== null ? ipo.price + ipo.gmp : null;
   const profitPerLot = ipo.lot && ipo.gmp !== null ? ipo.lot * ipo.gmp : null;
@@ -152,8 +170,10 @@ export function enrich(ipo: RawIpo, detail?: DetailData | null): Ipo {
   // Without a price band the GMP can't be turned into a % gain, so don't rank it yet.
   if (live && !ipo.price) Object.assign(scored, { score: null, verdict: null });
   const gmpHistory = detail?.gmpHistory ?? [];
+  const { listingPrice: _lp, listingGainPct: _lg, ...rest } = ipo;
   return {
-    ...ipo,
+    ...rest,
+    listing: listingResult(ipo),
     estListing,
     profitPerLot,
     minInvestment,

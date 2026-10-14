@@ -142,15 +142,19 @@ type RawIpo = Omit<
   | "fundamentals"
   | "gmpHistory"
   | "gmpDayChange"
+  | "listing"
 >;
+
+/** A listed IPO's listing price and gain, which the source puts in the name cell ("L@215.00 (-2.27%)") */
+type Listed = { listingPrice: number | null; listingGainPct: number | null };
 
 // ---------- InvestorGain ----------
 
-async function fetchInvestorGain(): Promise<RawIpo[]> {
+async function fetchInvestorGain(): Promise<(RawIpo & Listed)[]> {
   const rows = await fetchReport(GMP_REPORT);
   return rows
     .filter((r) => r["~IPO_Category"] === "IPO") // mainboard only
-    .map((r): RawIpo => {
+    .map((r): RawIpo & Listed => {
       const gmpHtml = String(r.GMP ?? "");
       const gmpText = text(gmpHtml);
       const gmpVal = gmpHtml.match(/<b>(-?[\d.,]+)<\/b>/)?.[1];
@@ -159,6 +163,9 @@ async function fetchInvestorGain(): Promise<RawIpo[]> {
       const gmp = gmpVal !== undefined ? num(gmpVal) : null;
       const code = String(r["~ipo_status1"] ?? "");
       const sub = text(String(r.Sub ?? ""));
+      // Date cells carry the GMP on that day: "5-Oct<br>…GMP: 2…"
+      const gmpOn = (cell: unknown) => num(String(cell ?? "").match(/GMP:\s*(-?[\d.]+)/)?.[1]);
+      const listed = String(r.Name ?? "").match(/L@\s*([\d.,]+)\s*\((-?[\d.]+)%\)/);
       return {
         id: `ig-${r["~id"]}`,
         name: String(r["~ipo_name"] ?? text(String(r.Name))),
@@ -187,6 +194,11 @@ async function fetchInvestorGain(): Promise<RawIpo[]> {
         },
         url: r["~urlrewrite_folder_name"] ? IG_BASE + r["~urlrewrite_folder_name"] : null,
         source: "investorgain",
+        gmpAtOpen: gmpOn(r.Open),
+        gmpAtClose: gmpOn(r.Close),
+        gmpAtListing: gmpOn(r.Listing),
+        listingPrice: listed ? num(listed[1]) : null,
+        listingGainPct: listed ? Number(listed[2]) : null,
       };
     });
 }
@@ -335,7 +347,7 @@ async function fetchDetail(url: string): Promise<DetailData> {
 }
 
 export async function scrapeAll(): Promise<{
-  ipos: RawIpo[];
+  ipos: (RawIpo & Listed)[];
   sources: SourceStatus[];
   details: Map<string, DetailData>;
 }> {

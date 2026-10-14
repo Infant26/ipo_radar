@@ -165,7 +165,6 @@ h1 { margin: 0; font-size: 26px; letter-spacing: -0.02em; font-weight: 700; }
 }
 .chip.s-open { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 35%, transparent); background: color-mix(in srgb, var(--pos) 10%, transparent); }
 .chip.s-upcoming { color: var(--apply); border-color: color-mix(in srgb, var(--apply) 35%, transparent); background: color-mix(in srgb, var(--apply) 10%, transparent); }
-.past .name { flex-direction: row; align-items: center; gap: 8px; }
 
 .big { font-size: 15px; font-weight: 600; }
 .small { font-size: 12px; }
@@ -253,7 +252,18 @@ h1 { margin: 0; font-size: 26px; letter-spacing: -0.02em; font-weight: 700; }
 .more { color: var(--accent); text-decoration: none; font-weight: 500; font-size: 13px; }
 .more:hover { text-decoration: underline; }
 
-.past .row { grid-template-columns: minmax(200px, 2fr) 1fr 1fr 1fr 1.2fr; }
+.past .row { grid-template-columns: minmax(200px, 2fr) .8fr 1.1fr 1fr 1fr 1fr .8fr; }
+.past .name { flex-direction: column; align-items: flex-start; gap: 2px; }
+
+/* GMP track record */
+.track { margin: 0 0 16px; padding: 16px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+.track h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.track > p { margin: 2px 0 14px; font-size: 13px; }
+.track-stats { margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 24px; }
+.track-stats div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.track-stats dt { font-size: 12px; color: var(--muted); }
+.track-stats dd { margin: 0; font-size: 18px; font-weight: 700; }
+.track-stats span { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .empty { padding: 28px; text-align: center; color: var(--muted); margin: 0; }
 
@@ -295,6 +305,7 @@ h1 { margin: 0; font-size: 26px; letter-spacing: -0.02em; font-weight: 700; }
   .score::before { grid-column: 1 / -1; }
   .past .row .name { grid-column: 1 / -1; }
   .past .row > span[data-l] { display: flex; flex-direction: column; }
+  .track-stats { grid-template-columns: 1fr 1fr; }
   .detail { padding: 4px 16px 18px; }
   .cols { grid-template-columns: 1fr; gap: 22px; }
   .ratios, .facts { grid-template-columns: 1fr; }

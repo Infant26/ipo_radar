@@ -1,8 +1,9 @@
-import type { Ipo, ScorePart, Verdict } from "./types";
+import type { FundamentalsData, Ipo, ScorePart, Verdict } from "./types";
+import { scoreFundamentals } from "./fundamentals";
 
 type RawIpo = Omit<
   Ipo,
-  "estListing" | "profitPerLot" | "minInvestment" | "score" | "verdict" | "scoreParts"
+  "estListing" | "profitPerLot" | "minInvestment" | "score" | "verdict" | "scoreParts" | "fundamentals"
 >;
 
 const clamp = (v: number, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, v));
@@ -116,7 +117,7 @@ export function scoreIpo(ipo: RawIpo): Pick<Ipo, "score" | "verdict" | "scorePar
   return { score, verdict, scoreParts: parts };
 }
 
-export function enrich(ipo: RawIpo): Ipo {
+export function enrich(ipo: RawIpo, details?: FundamentalsData | null): Ipo {
   const estListing = ipo.price && ipo.gmp !== null ? ipo.price + ipo.gmp : null;
   const profitPerLot = ipo.lot && ipo.gmp !== null ? ipo.lot * ipo.gmp : null;
   const minInvestment = ipo.lot && ipo.price ? ipo.lot * ipo.price : null;
@@ -124,5 +125,5 @@ export function enrich(ipo: RawIpo): Ipo {
   const scored = live ? scoreIpo(ipo) : { score: null, verdict: null, scoreParts: [] };
   // Without a price band the GMP can't be turned into a % gain, so don't rank it yet.
   if (live && !ipo.price) Object.assign(scored, { score: null, verdict: null });
-  return { ...ipo, estListing, profitPerLot, minInvestment, ...scored };
+  return { ...ipo, estListing, profitPerLot, minInvestment, ...scored, fundamentals: scoreFundamentals(details) };
 }

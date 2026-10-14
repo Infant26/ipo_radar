@@ -9,10 +9,10 @@ export const maxDuration = 30;
 const ORDER = { open: 0, upcoming: 1, closed: 2, listed: 3 } as const;
 
 export async function GET() {
-  const { ipos, sources } = await scrapeAll();
+  const { ipos, sources, details } = await scrapeAll();
 
   const enriched = ipos
-    .map(enrich)
+    .map((ipo) => enrich(ipo, details.get(ipo.id)))
     .sort(
       (a, b) =>
         ORDER[a.status] - ORDER[b.status] ||

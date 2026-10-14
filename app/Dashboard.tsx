@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Ipo, IpoResponse, Verdict } from "@/lib/types";
+import type { FundVerdict, Ipo, IpoResponse, Verdict } from "@/lib/types";
 
 const PREV_KEY = "ipo-radar:prev-gmp";
 
 type Tab = "apply" | "past";
 type Filter = "all" | "open" | "upcoming";
+type RankBy = "listing" | "fundamentals";
 
 const inr = (n: number | null | undefined, digits = 0) =>
   n === null || n === undefined
@@ -53,6 +54,13 @@ const verdictClass: Record<Verdict, string> = {
   Avoid: "v-avoid",
 };
 
+const fundClass: Record<FundVerdict, string> = {
+  Strong: "v-strong",
+  Fair: "v-apply",
+  Weak: "v-risky",
+  Poor: "v-avoid",
+};
+
 const statusLabel: Record<Ipo["status"], string> = {
   open: "Open",
   upcoming: "Upcoming",
@@ -84,6 +92,7 @@ export default function Dashboard() {
   const [toast, setToast] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("apply");
   const [filter, setFilter] = useState<Filter>("all");
+  const [rankBy, setRankBy] = useState<RankBy>("listing");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -143,13 +152,18 @@ export default function Dashboard() {
     return () => clearInterval(t);
   }, [refresh]);
 
+  const rankScore = useCallback(
+    (i: Ipo) => (rankBy === "listing" ? i.score : i.fundamentals.score) ?? -1,
+    [rankBy],
+  );
+
   const applyList = useMemo(
     () =>
       (data?.ipos ?? [])
         .filter((i) => i.status === "open" || i.status === "upcoming")
         .filter((i) => filter === "all" || i.status === filter)
-        .sort((a, b) => (b.score ?? -1) - (a.score ?? -1)),
-    [data, filter],
+        .sort((a, b) => rankScore(b) - rankScore(a)),
+    [data, filter, rankScore],
   );
 
   const pastList = useMemo(
@@ -163,13 +177,15 @@ export default function Dashboard() {
   const stats = useMemo(() => {
     const ipos = data?.ipos ?? [];
     const live = ipos.filter((i) => i.status === "open" || i.status === "upcoming");
-    const top = [...live].sort((a, b) => (b.score ?? -1) - (a.score ?? -1))[0];
-    const bestGmp = [...live].sort((a, b) => (b.gmpPct ?? -1e9) - (a.gmpPct ?? -1e9))[0];
+    const best = (f: (i: Ipo) => number | null) =>
+      [...live].filter((i) => f(i) !== null).sort((a, b) => f(b)! - f(a)!)[0];
     return {
       open: ipos.filter((i) => i.status === "open").length,
       upcoming: ipos.filter((i) => i.status === "upcoming").length,
-      top,
-      bestGmp,
+      topListing: best((i) => i.score),
+      topFund: best((i) => i.fundamentals.score),
+      // Strong on both: the higher of the two scores' minimum
+      both: best((i) => (i.score !== null && i.fundamentals.score !== null ? Math.min(i.score, i.fundamentals.score) : null)),
     };
   }, [data]);
 
@@ -231,37 +247,46 @@ export default function Dashboard() {
       {data && (
         <>
           <section className="summary" aria-label="Summary">
-            {stats.top ? (
-              <p className="call">
-                Best to apply for right now: <a href={`#${stats.top.id}`}>{stats.top.name}</a>,{" "}
-                score <strong className="num">{stats.top.score}</strong>{" "}
-                <span className={`verdict ${stats.top.verdict ? verdictClass[stats.top.verdict] : ""}`}>
-                  ({stats.top.verdict})
-                </span>
-                {stats.top.gmpPct != null && (
-                  <>
-                    , GMP <strong className={`num ${tone(stats.top.gmpPct)}`}>{pct(stats.top.gmpPct)}</strong>
-                  </>
+            {stats.topListing || stats.topFund ? (
+              <ul className="calls">
+                {stats.topListing && (
+                  <li>
+                    <span className="muted">Best listing gain</span>
+                    <a href={`#${stats.topListing.id}`}>{stats.topListing.name}</a>
+                    <span className="num">
+                      {stats.topListing.score}{" "}
+                      {stats.topListing.gmpPct != null && (
+                        <span className={tone(stats.topListing.gmpPct)}>· GMP {pct(stats.topListing.gmpPct)}</span>
+                      )}
+                    </span>
+                  </li>
                 )}
-                .
-              </p>
+                {stats.topFund && (
+                  <li>
+                    <span className="muted">Strongest business</span>
+                    <a href={`#${stats.topFund.id}`}>{stats.topFund.name}</a>
+                    <span className="num">
+                      {stats.topFund.fundamentals.score}{" "}
+                      <span className="muted">· {stats.topFund.fundamentals.verdict}</span>
+                    </span>
+                  </li>
+                )}
+                {stats.both && (
+                  <li>
+                    <span className="muted">Best on both</span>
+                    <a href={`#${stats.both.id}`}>{stats.both.name}</a>
+                    <span className="num">
+                      {stats.both.score} / {stats.both.fundamentals.score}
+                    </span>
+                  </li>
+                )}
+              </ul>
             ) : (
               <p className="call">No mainboard IPO is open or upcoming right now. Check back after the next refresh.</p>
             )}
             <dl className="counts">
               <div><dt>Open</dt><dd className="num">{stats.open}</dd></div>
               <div><dt>Upcoming</dt><dd className="num">{stats.upcoming}</dd></div>
-              <div>
-                <dt>Highest GMP</dt>
-                <dd className="num">
-                  {stats.bestGmp?.gmpPct != null ? (
-                    <>
-                      <span className={tone(stats.bestGmp.gmpPct)}>{pct(stats.bestGmp.gmpPct)}</span>{" "}
-                      <span className="muted">{stats.bestGmp.name}</span>
-                    </>
-                  ) : "–"}
-                </dd>
-              </div>
             </dl>
           </section>
 
@@ -275,12 +300,23 @@ export default function Dashboard() {
               </button>
             </div>
             {tab === "apply" && (
-              <div className="seg small">
-                {(["all", "open", "upcoming"] as Filter[]).map((f) => (
-                  <button key={f} className={filter === f ? "on" : ""} onClick={() => setFilter(f)}>
-                    {f === "all" ? "All" : f === "open" ? "Open" : "Upcoming"}
+              <div className="controls">
+                <div className="seg small" role="group" aria-label="Rank by">
+                  <span className="seg-label">Rank by</span>
+                  <button className={rankBy === "listing" ? "on" : ""} onClick={() => setRankBy("listing")}>
+                    Listing gain
                   </button>
-                ))}
+                  <button className={rankBy === "fundamentals" ? "on" : ""} onClick={() => setRankBy("fundamentals")}>
+                    Fundamentals
+                  </button>
+                </div>
+                <div className="seg small" role="group" aria-label="Status">
+                  {(["all", "open", "upcoming"] as Filter[]).map((f) => (
+                    <button key={f} className={filter === f ? "on" : ""} onClick={() => setFilter(f)}>
+                      {f === "all" ? "All" : f === "open" ? "Open" : "Upcoming"}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </nav>
@@ -290,10 +326,10 @@ export default function Dashboard() {
               <div className="row head">
                 <span>#</span>
                 <span>IPO</span>
-                <span>Apply score</span>
+                <span className={rankBy === "listing" ? "sorted" : ""}>Listing score</span>
+                <span className={rankBy === "fundamentals" ? "sorted" : ""}>Fundamentals</span>
                 <span className="r">GMP</span>
                 <span className="r">Profit / lot</span>
-                <span className="r">Price · Lot</span>
                 <span className="r">Subscription</span>
               </div>
               {applyList.length === 0 && (
@@ -345,14 +381,25 @@ export default function Dashboard() {
 
           <footer className="foot">
             <p>
-              <strong>How the apply score works:</strong> expected listing gain from GMP (45%), QIB demand (20%),
+              <strong>Listing score</strong> estimates listing-day gain: GMP as a % of price (45%), QIB demand (20%),
               overall subscription relative to how far bidding has gone (15%), GMP momentum (10%) and market buzz
-              (10%). Data that isn’t available yet, like subscription for upcoming IPOs, is left out rather than
-              scored as zero. Click any row to see its breakdown.
+              (10%).
+            </p>
+            <p>
+              <strong>Fundamentals</strong> rates the business itself, for holding beyond listing day: profitability
+              (20%), multi-year profit growth (15%), revenue growth (10%), latest part-year results (10%), ROE and ROA
+              (15%), valuation against listed peers and PEG (15%), debt (10%) and how much of the issue is fresh money
+              (5%). Ratios are judged against standard bands, e.g. ROE above 25% is excellent and debt/equity under 0.3
+              is conservative.
+            </p>
+            <p>
+              Both scores leave out data that isn’t available rather than scoring it as zero. Click any row to see the
+              breakdown, financials and peers.
             </p>
             <p className="muted">
-              GMP is an unofficial grey-market indicator and can change quickly. This dashboard is for information
-              only and is not investment advice. Data from InvestorGain and IPOWatch.
+              GMP is an unofficial grey-market indicator and can change quickly. Financials are the company’s restated
+              figures from the prospectus. This dashboard is for information only and is not investment advice. Data
+              from InvestorGain and IPOWatch.
             </p>
           </footer>
         </>
@@ -364,6 +411,65 @@ export default function Dashboard() {
 }
 
 const tone = (n: number | null) => (n === null ? "" : n > 0 ? "pos" : n < 0 ? "neg" : "");
+
+const crore = (n: number | null) =>
+  n === null ? "–" : n.toLocaleString("en-IN", { maximumFractionDigits: Math.abs(n) >= 1000 ? 0 : 1 });
+
+function ScoreCell({
+  label,
+  score,
+  verdict,
+  cls,
+  empty,
+  className = "",
+}: {
+  className?: string;
+  label: string;
+  score: number | null;
+  verdict: string | null;
+  cls: string;
+  empty: string;
+}) {
+  return (
+    <div className={`score ${className}`} data-l={label}>
+      <span className="sv num">{score ?? "–"}</span>
+      <div className="sbar">
+        <i style={{ width: `${score ?? 0}%` }} className={cls} />
+      </div>
+      <span className={`verdict ${verdict ? cls : "v-avoid"}`}>{verdict ?? empty}</span>
+    </div>
+  );
+}
+
+function Parts({ title, parts, note }: { title: string; parts: Ipo["scoreParts"]; note?: string }) {
+  return (
+    <div className="parts">
+      <h3>{title}</h3>
+      {note && <p className="pd">{note}</p>}
+      {parts.map((p) => (
+        <div key={p.key} className={`part ${p.value === null ? "na" : ""}`}>
+          <div className="ph">
+            <span>{p.label}</span>
+            <span className="num muted">
+              {p.value === null ? "not counted" : `${Math.round(p.value * p.weight)} / ${p.weight}`}
+            </span>
+          </div>
+          <div className="pbar">
+            <i style={{ width: `${(p.value ?? 0) * 100}%` }} />
+          </div>
+          <span className="pd">{p.detail}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Ratio value with its standard band label */
+function band(v: number | null, bands: [number, string][], last: string) {
+  if (v === null) return null;
+  for (const [limit, label] of bands) if (v < limit) return label;
+  return last;
+}
 
 function IpoRow({
   ipo,
@@ -379,6 +485,27 @@ function IpoRow({
   onToggle: () => void;
 }) {
   const s = ipo.subscription;
+  const f = ipo.fundamentals;
+  const r = f.ratios;
+  const fd = f.data;
+  const pctv = (n: number | null | undefined, d = 1) =>
+    n == null ? "–" : `${n.toLocaleString("en-IN", { maximumFractionDigits: d })}%`;
+  const mult = (n: number | null | undefined) =>
+    n == null ? "–" : `${n.toLocaleString("en-IN", { maximumFractionDigits: 1 })}x`;
+
+  const ratioRows: [string, string, string | null][] = [
+    ["ROE", pctv(r.roe), band(r.roe ?? null, [[8, "below avg"], [15, "acceptable"], [25, "good"]], "excellent")],
+    ["ROA", pctv(r.roa), band(r.roa ?? null, [[3, "below avg"], [6, "acceptable"], [12, "good"]], "excellent")],
+    ["ROCE", pctv(r.roce), null],
+    ["Net margin", pctv(r.netMargin), band(r.netMargin ?? null, [[3, "below avg"], [10, "acceptable"], [20, "good"]], "excellent")],
+    ["EBITDA margin", pctv(r.ebitdaMargin), band(r.ebitdaMargin ?? null, [[5, "below avg"], [15, "acceptable"], [25, "good"]], "excellent")],
+    ["Debt / equity", r.de == null ? "–" : r.de.toFixed(2), band(r.de ?? null, [[0.3, "conservative"], [0.8, "moderate"], [2, "elevated"]], "high risk")],
+    ["P/E", mult(r.pe), r.pe != null && r.pe <= 0 ? "loss" : band(r.pe ?? null, [[10, "value"], [20, "fair"], [35, "growth"]], "premium")],
+    ["P/B", mult(r.pb), band(r.pb ?? null, [[1, "value"], [2.5, "fair"], [5, "growth"]], "premium")],
+    ["P/S", mult(r.ps), band(r.ps ?? null, [[1, "value"], [3, "fair"], [8, "growth"]], "premium")],
+    ["PEG", r.peg == null ? "–" : r.peg.toFixed(2), band(r.peg ?? null, [[0.5, "cheap"], [1, "fair"], [2, "fully valued"]], "overvalued")],
+  ];
+
   return (
     <div className={`item ${open ? "open" : ""}`} id={ipo.id}>
       <button className="row" onClick={onToggle} aria-expanded={open}>
@@ -389,22 +516,39 @@ function IpoRow({
             <span className={`chip s-${ipo.status}`}>{statusLabel[ipo.status]}</span>
             <span className="muted">{timing(ipo)}</span>
           </span>
-        </div>
-        <div className="score" data-l="Apply score">
-          <span className="sv num">{ipo.score ?? "–"}</span>
-          <div className="sbar">
-            <i style={{ width: `${ipo.score ?? 0}%` }} className={ipo.verdict ? verdictClass[ipo.verdict] : ""} />
-          </div>
-          {ipo.verdict ? (
-            <span className={`verdict ${verdictClass[ipo.verdict]}`}>{ipo.verdict}</span>
-          ) : (
-            <span className="verdict v-avoid">{ipo.price ? "Not scored" : "Price band TBA"}</span>
+          {f.flags.length > 0 && (
+            <span className="flags">
+              {f.flags.filter((fl) => fl.tone !== "good").slice(0, 2).map((fl) => (
+                <span key={fl.text} className={`flag ${fl.tone}`}>{fl.text}</span>
+              ))}
+              {f.flags.every((fl) => fl.tone === "good") &&
+                f.flags.slice(0, 2).map((fl) => (
+                  <span key={fl.text} className="flag good">{fl.text}</span>
+                ))}
+            </span>
           )}
         </div>
-        <div className="r" data-l="GMP">
+        <ScoreCell
+          label="Listing score"
+          score={ipo.score}
+          verdict={ipo.verdict}
+          cls={ipo.verdict ? verdictClass[ipo.verdict] : ""}
+          empty={ipo.price ? "Not scored" : "Price band TBA"}
+          className="c-a"
+        />
+        <ScoreCell
+          label="Fundamentals"
+          score={f.score}
+          verdict={f.verdict}
+          cls={f.verdict ? fundClass[f.verdict] : ""}
+          empty={fd ? "Not enough data" : "No financials"}
+          className="c-b"
+        />
+        <div className="r c-a" data-l="GMP">
           <span className={`num big ${tone(ipo.gmp)}`}>{inr(ipo.gmp, 2)}</span>
-          <span className="num small">
+          <span className="num small nowrap">
             <span className={tone(ipo.gmpPct)}>{pct(ipo.gmpPct)}</span>
+            <span className="muted"> on {inr(ipo.price)}</span>
             {delta !== undefined && delta !== 0 && (
               <span className={`delta ${delta > 0 ? "pos" : "neg"}`} title="Change since your last refresh">
                 {delta > 0 ? "▲" : "▼"} {Math.abs(delta)}
@@ -412,17 +556,13 @@ function IpoRow({
             )}
           </span>
         </div>
-        <div className="r" data-l="Profit / lot">
+        <div className="r c-b" data-l="Profit / lot">
           <span className={`num big ${tone(ipo.profitPerLot)}`}>{inr(ipo.profitPerLot)}</span>
-          <span className="num small muted">Est. list {inr(ipo.estListing, 2)}</span>
-        </div>
-        <div className="r" data-l="Price · Lot">
-          <span className="num">
-            {inr(ipo.price)} <span className="muted">× {ipo.lot ?? "–"}</span>
+          <span className="num small muted nowrap">
+            {ipo.lot ?? "–"} sh · min {inr(ipo.minInvestment)}
           </span>
-          <span className="num small muted">Min {inr(ipo.minInvestment)}</span>
         </div>
-        <div className="r" data-l="Subscription">
+        <div className="r c-a" data-l="Subscription">
           {s.total === null && s.qib === null ? (
             <span className="small muted">{ipo.status === "upcoming" ? `Bids open ${fmtDate(ipo.openDate)}` : "No data yet"}</span>
           ) : (
@@ -438,33 +578,107 @@ function IpoRow({
 
       {open && (
         <div className="detail">
-          <div className="parts">
-            {ipo.scoreParts.map((p) => (
-              <div key={p.key} className={`part ${p.value === null ? "na" : ""}`}>
-                <div className="ph">
-                  <span>{p.label}</span>
-                  <span className="num muted">
-                    {p.value === null ? "not counted" : `${Math.round(p.value * p.weight)} / ${p.weight}`}
-                  </span>
-                </div>
-                <div className="pbar">
-                  <i style={{ width: `${(p.value ?? 0) * 100}%` }} />
-                </div>
-                <span className="pd">{p.detail}</span>
-              </div>
-            ))}
+          {f.flags.length > 0 && (
+            <div className="flags all">
+              {f.flags.map((fl) => (
+                <span key={fl.text} className={`flag ${fl.tone}`}>{fl.text}</span>
+              ))}
+            </div>
+          )}
+
+          <div className="cols">
+            <Parts title="Listing score" parts={ipo.scoreParts} />
+            <Parts
+              title="Fundamentals"
+              parts={f.parts}
+              note={fd ? `Based on ${Math.round(f.coverage * 100)}% of the factors; the rest weren’t reported.` : undefined}
+            />
           </div>
-          <dl className="facts">
-            <div><dt>Issue size</dt><dd>{ipo.sizeCr ? `₹${ipo.sizeCr.toLocaleString("en-IN")} Cr` : "–"}</dd></div>
-            <div><dt>P/E</dt><dd>{ipo.pe ?? "–"}</dd></div>
-            <div><dt>Bidding</dt><dd>{fmtDate(ipo.openDate)} – {fmtDate(ipo.closeDate)}</dd></div>
-            <div><dt>Allotment</dt><dd>{fmtDate(ipo.allotmentDate)}</dd></div>
-            <div><dt>Listing</dt><dd>{fmtDate(ipo.listingDate)}</dd></div>
-            <div><dt>GMP range</dt><dd>{ipo.gmpLow !== null ? `${inr(ipo.gmpLow, 2)} – ${inr(ipo.gmpHigh, 2)}` : "–"}</dd></div>
-            <div><dt>IPOWatch GMP</dt><dd>{inr(ipo.gmpAlt, 2)}</dd></div>
-            <div><dt>Retail allotment odds</dt><dd>{s.retail && s.retail > 1 ? `~1 in ${Math.ceil(s.retail)}` : s.retail !== null ? "Very likely" : "–"}</dd></div>
-            <div><dt>GMP updated</dt><dd>{ipo.gmpUpdatedAt ?? "–"}</dd></div>
-          </dl>
+
+          {fd && fd.periods.length > 0 && (
+            <div className="fin">
+              <h3>Financials <span className="muted">(₹ crore, restated)</span></h3>
+              <div className="tbl-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Period ended</th>
+                      {fd.periods.map((p) => (
+                        <th key={p.label} className="r">
+                          {p.label}
+                          {!p.fullYear && <span className="muted"> (part)</span>}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(
+                      [
+                        ["Revenue", "revenue"],
+                        ["Profit after tax", "pat"],
+                        ["EBITDA", "ebitda"],
+                        ["Net worth", "netWorth"],
+                        ["Borrowing", "borrowing"],
+                        ["Total assets", "assets"],
+                      ] as const
+                    ).map(([label, key]) => (
+                      <tr key={key}>
+                        <td>{label}</td>
+                        {fd.periods.map((p) => (
+                          <td key={p.label} className={`r num ${key === "pat" ? tone(p.pat) : ""}`}>
+                            {crore(p[key])}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div className="cols">
+            {fd && (
+              <div>
+                <h3>Key ratios</h3>
+                <dl className="ratios">
+                  {ratioRows.map(([k, v, b]) => (
+                    <div key={k}>
+                      <dt>{k}</dt>
+                      <dd>
+                        <span className="num">{v}</span>
+                        {b && <span className={`band b-${b.replace(/\s+/g, "-")}`}>{b}</span>}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+                {fd.peers.length > 0 && (
+                  <p className="pd peers">
+                    Listed peers (P/E): {fd.peers.map((p) => `${p.name} ${p.pe ?? "–"}`).join(", ")}
+                    {fd.peerMedianPe && ` · median ${fd.peerMedianPe.toFixed(1)}`}
+                  </p>
+                )}
+              </div>
+            )}
+            <div>
+              <h3>Issue</h3>
+              <dl className="facts">
+                <div><dt>Sector</dt><dd>{fd?.sector ?? "–"}</dd></div>
+                <div><dt>Issue size</dt><dd>{ipo.sizeCr ? `₹${ipo.sizeCr.toLocaleString("en-IN")} Cr` : "–"}</dd></div>
+                <div><dt>Offer for sale</dt><dd>{fd?.ofsPct != null ? `${Math.round(fd.ofsPct)}% of issue` : "–"}</dd></div>
+                <div><dt>Market cap</dt><dd>{fd?.marketCapCr ? `₹${crore(fd.marketCapCr)} Cr` : "–"}</dd></div>
+                <div><dt>Promoter holding</dt><dd>{fd?.promoterPre != null ? `${fd.promoterPre}% → ${fd.promoterPost ?? "–"}%` : "–"}</dd></div>
+                <div><dt>Bidding</dt><dd>{fmtDate(ipo.openDate)} to {fmtDate(ipo.closeDate)}</dd></div>
+                <div><dt>Allotment</dt><dd>{fmtDate(ipo.allotmentDate)}</dd></div>
+                <div><dt>Listing</dt><dd>{fmtDate(ipo.listingDate)}</dd></div>
+                <div><dt>GMP range</dt><dd>{ipo.gmpLow !== null ? `${inr(ipo.gmpLow, 2)} to ${inr(ipo.gmpHigh, 2)}` : "–"}</dd></div>
+                <div><dt>IPOWatch GMP</dt><dd>{inr(ipo.gmpAlt, 2)}</dd></div>
+                <div><dt>Retail allotment odds</dt><dd>{s.retail && s.retail > 1 ? `~1 in ${Math.ceil(s.retail)}` : s.retail !== null ? "Very likely" : "–"}</dd></div>
+                <div><dt>GMP updated</dt><dd>{ipo.gmpUpdatedAt ?? "–"}</dd></div>
+              </dl>
+            </div>
+          </div>
+
           {ipo.url && (
             <a className="more" href={ipo.url} target="_blank" rel="noreferrer">
               Full details on {ipo.source === "investorgain" ? "InvestorGain" : "IPOWatch"} ↗

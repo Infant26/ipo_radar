@@ -46,9 +46,62 @@ export interface Ipo {
   estListing: number | null;
   profitPerLot: number | null;
   minInvestment: number | null;
+  /** Listing score: how likely a strong listing-day gain is */
   score: number | null;
   verdict: Verdict | null;
   scoreParts: ScorePart[];
+  /** Business quality, scored separately from listing gains */
+  fundamentals: Fundamentals;
+}
+
+export interface FinancialPeriod {
+  /** e.g. "31 Mar 2026" */
+  label: string;
+  /** true for a full financial year (ending 31 Mar), false for a part-year stub */
+  fullYear: boolean;
+  assets: number | null;
+  revenue: number | null;
+  pat: number | null;
+  ebitda: number | null;
+  netWorth: number | null;
+  borrowing: number | null;
+}
+
+export interface FundamentalsData {
+  sector: string | null;
+  /** newest first, ₹ crore */
+  periods: FinancialPeriod[];
+  pe: number | null;
+  pb: number | null;
+  peerMedianPe: number | null;
+  peers: { name: string; pe: number | null }[];
+  roe: number | null;
+  roce: number | null;
+  patMargin: number | null;
+  /** share of the issue that is offer-for-sale (money goes to selling shareholders, not the company) */
+  ofsPct: number | null;
+  promoterPre: number | null;
+  promoterPost: number | null;
+  marketCapCr: number | null;
+}
+
+export type FundVerdict = "Strong" | "Fair" | "Weak" | "Poor";
+
+export interface Flag {
+  tone: "bad" | "warn" | "good";
+  text: string;
+}
+
+export interface Fundamentals {
+  data: FundamentalsData | null;
+  score: number | null;
+  verdict: FundVerdict | null;
+  parts: ScorePart[];
+  flags: Flag[];
+  /** share of the score's weight backed by real data (0..1) */
+  coverage: number;
+  /** key ratios for display */
+  ratios: Record<string, number | null>;
 }
 
 export type Verdict = "Strong apply" | "Apply" | "Risky" | "Avoid";

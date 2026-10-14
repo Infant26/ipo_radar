@@ -1,4 +1,4 @@
-import type { Ipo, IpoStatus, SourceStatus } from "./types";
+import type { FinancialPeriod, FundamentalsData, Ipo, IpoStatus, SourceStatus } from "./types";
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36";
@@ -8,9 +8,9 @@ const IG_GMP_URL = `${IG_BASE}/report/live-ipo-gmp/331/`;
 const IG_SUB_URL = `${IG_BASE}/report/ipo-subscription-live/333/ipo/`;
 const IPOWATCH_URL = "https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/";
 
-async function fetchHtml(url: string, timeoutMs = 15000): Promise<string> {
+async function fetchHtml(url: string, timeoutMs = 15000, revalidate?: number): Promise<string> {
   const res = await fetch(url, {
-    cache: "no-store",
+    ...(revalidate ? { next: { revalidate } } : { cache: "no-store" as const }),
     signal: AbortSignal.timeout(timeoutMs),
     headers: {
       "User-Agent": UA,
@@ -56,18 +56,22 @@ const mapStatus = (code: string): IpoStatus => {
 };
 
 /**
- * InvestorGain is a Next.js app that streams its table data in the RSC
- * payload (`self.__next_f.push([1, "…"])`). Rebuild the payload and pull the
- * `initialTableResponse` JSON object out of it.
+ * InvestorGain is a Next.js app that streams its data in the RSC payload
+ * (`self.__next_f.push([1, "…"])`). Rebuild that payload as one string.
  */
-function extractTable(html: string): Record<string, unknown>[] {
+function flightPayload(html: string): string {
   let payload = "";
   for (const m of html.matchAll(/self\.__next_f\.push\(\[1,("(?:[^"\\]|\\.)*")\]\)/g)) {
     payload += JSON.parse(m[1]);
   }
-  const k = payload.indexOf('"initialTableResponse":');
-  if (k < 0) throw new Error("table data not found (page layout may have changed)");
-  const start = payload.indexOf("{", k);
+  return payload;
+}
+
+/** Parse the JSON object/array that follows `"key":` in the payload. */
+function extractJson(payload: string, key: string): unknown {
+  const k = payload.indexOf(`"${key}":`);
+  if (k < 0) throw new Error(`${key} not found (page layout may have changed)`);
+  const start = k + key.length + 3;
   let depth = 0;
   let inStr = false;
   let i = start;
@@ -79,17 +83,36 @@ function extractTable(html: string): Record<string, unknown>[] {
       continue;
     }
     if (c === '"') inStr = true;
-    else if (c === "{") depth++;
-    else if (c === "}" && --depth === 0) break;
+    else if (c === "{" || c === "[") depth++;
+    else if ((c === "}" || c === "]") && --depth === 0) break;
   }
-  const obj = JSON.parse(payload.slice(start, i + 1));
+  return JSON.parse(payload.slice(start, i + 1));
+}
+
+function extractTable(html: string): Record<string, unknown>[] {
+  const obj = extractJson(flightPayload(html), "initialTableResponse") as {
+    reportTableData?: Record<string, unknown>[];
+  };
   if (!Array.isArray(obj.reportTableData)) throw new Error("unexpected table format");
   return obj.reportTableData;
 }
 
+/** HTML table → rows of cell text */
+function tableRows(html: string): string[][] {
+  return [...html.matchAll(/<tr[\s\S]*?<\/tr>/g)].map((r) =>
+    [...r[0].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/g)].map((c) => text(c[1])),
+  );
+}
+
 type RawIpo = Omit<
   Ipo,
-  "estListing" | "profitPerLot" | "minInvestment" | "score" | "verdict" | "scoreParts"
+  | "estListing"
+  | "profitPerLot"
+  | "minInvestment"
+  | "score"
+  | "verdict"
+  | "scoreParts"
+  | "fundamentals"
 >;
 
 // ---------- InvestorGain ----------
@@ -167,6 +190,97 @@ async function fetchInvestorGainSubs(): Promise<Map<string, SubRow>> {
   return map;
 }
 
+// ---------- InvestorGain IPO detail page (financials) ----------
+
+/** Financials only change when a new prospectus is filed; don't re-download them on every refresh. */
+const DETAIL_TTL_S = 6 * 60 * 60;
+const detailCache = new Map<string, { at: number; data: FundamentalsData }>();
+
+const median = (xs: number[]) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+function parseFinancials(payload: string): FinancialPeriod[] {
+  const html = payload.match(/<table[^>]*id=['"]financialTable['"][\s\S]*?<\/table>/)?.[0];
+  if (!html) return [];
+  const rows = tableRows(html);
+  const header = rows.find((r) => /period/i.test(r[0] ?? ""));
+  if (!header) return [];
+  const row = (re: RegExp) => rows.find((r) => re.test(r[0] ?? ""));
+  const assets = row(/^assets/i) ?? row(/^total assets/i);
+  const revenue = row(/^revenue/i) ?? row(/^total income/i);
+  const pat = row(/^profit after tax/i);
+  const ebitda = row(/^ebitda/i);
+  const netWorth = row(/^net worth/i);
+  const borrowing = row(/^total borrowing/i);
+  const labels = header.slice(1);
+  // The oldest column in a prospectus is always a full financial year; use its
+  // month as the year-end (most companies end in March, some in December).
+  const month = (l: string) => l.match(/[A-Za-z]{3}/)?.[0]?.toLowerCase();
+  const fyEnd = month(labels[labels.length - 1] ?? "") ?? "mar";
+  return labels.map((label, i) => ({
+    label,
+    fullYear: month(label) === fyEnd,
+    assets: num(assets?.[i + 1]),
+    revenue: num(revenue?.[i + 1]),
+    pat: num(pat?.[i + 1]),
+    ebitda: num(ebitda?.[i + 1]),
+    netWorth: num(netWorth?.[i + 1]),
+    borrowing: num(borrowing?.[i + 1]),
+  }));
+}
+
+function parsePeers(payload: string, company: string): { name: string; pe: number | null }[] {
+  const html = payload.match(/<table[^>]*id=['"]analysisTable['"][\s\S]*?<\/table>/)?.[0];
+  if (!html) return [];
+  const rows = tableRows(html);
+  const peCol = rows[0]?.findIndex((h) => /^p\/e/i.test(h)) ?? -1;
+  if (peCol < 0) return [];
+  const key = nameKey(company).split(" ")[0];
+  return rows
+    .slice(1)
+    .filter((r) => r[0] && !nameKey(r[0]).startsWith(key) && !/^our company/i.test(r[0]))
+    .map((r) => ({ name: r[0].replace(/\s+(ltd|limited)\.?$/i, ""), pe: num(r[peCol]) }));
+}
+
+async function fetchDetail(url: string): Promise<FundamentalsData> {
+  const hit = detailCache.get(url);
+  if (hit && Date.now() - hit.at < DETAIL_TTL_S * 1000) return hit.data;
+
+  const payload = flightPayload(await fetchHtml(url, 12000, DETAIL_TTL_S));
+  const info = (extractJson(payload, "ipoData") as Record<string, unknown>[])[0] ?? {};
+  const n = (k: string) => {
+    const v = info[k];
+    return v === "" || v === null || v === undefined ? null : num(v);
+  };
+  // Both in rupees
+  const total = n("issue_size_in_amt");
+  const ofs = n("issue_size_ofs_in_amt");
+  const ofsPct = total && ofs !== null ? (ofs / total) * 100 : null;
+
+  const peers = parsePeers(payload, String(info.company_name ?? ""));
+  const data: FundamentalsData = {
+    sector: (info.company_sector as string) || null,
+    periods: parseFinancials(payload),
+    pe: n("pe_ratio"),
+    pb: n("price_to_book_value"),
+    peerMedianPe: median(peers.map((p) => p.pe).filter((p): p is number => p !== null && p > 0)),
+    peers,
+    roe: n("kpi_ronw") ?? n("kpi_roe"),
+    roce: n("kpi_roce"),
+    patMargin: n("kpi_pat_margin"),
+    ofsPct: ofsPct !== null ? Math.min(100, Math.max(0, ofsPct)) : null,
+    promoterPre: n("promoter_shareholding_pre_issue"),
+    promoterPost: n("promoter_shareholding_post_issue"),
+    marketCapCr: n("market_cap"),
+  };
+  detailCache.set(url, { at: Date.now(), data });
+  return data;
+}
+
 // ---------- IPOWatch (fallback + second GMP opinion) ----------
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
@@ -239,7 +353,11 @@ async function fetchIpoWatch(): Promise<RawIpo[]> {
 /** Names differ slightly between sites ("Tonbo Imaging India" vs "Tonbo Imaging"): match on the first two words. */
 const shortKey = (name: string) => nameKey(name).split(" ").slice(0, 2).join(" ");
 
-export async function scrapeAll(): Promise<{ ipos: RawIpo[]; sources: SourceStatus[] }> {
+export async function scrapeAll(): Promise<{
+  ipos: RawIpo[];
+  sources: SourceStatus[];
+  details: Map<string, FundamentalsData>;
+}> {
   const [ig, subs, iw] = await Promise.allSettled([
     fetchInvestorGain(),
     fetchInvestorGainSubs(),
@@ -259,7 +377,7 @@ export async function scrapeAll(): Promise<{ ipos: RawIpo[]; sources: SourceStat
 
   if (ig.status !== "fulfilled") {
     // Primary source down — fall back to IPOWatch on its own.
-    return { ipos: watch, sources };
+    return { ipos: watch, sources, details: new Map() };
   }
 
   const subMap = subs.status === "fulfilled" ? subs.value : new Map<string, SubRow>();
@@ -283,5 +401,22 @@ export async function scrapeAll(): Promise<{ ipos: RawIpo[]; sources: SourceStat
     };
   });
 
-  return { ipos, sources };
+  // Financials for the IPOs you can still apply for
+  const targets = ipos.filter((i) => (i.status === "open" || i.status === "upcoming") && i.url);
+  const results = await Promise.allSettled(targets.map((i) => fetchDetail(i.url!)));
+  const details = new Map<string, FundamentalsData>();
+  results.forEach((r, idx) => {
+    if (r.status === "fulfilled") details.set(targets[idx].id, r.value);
+  });
+  const failed = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+  sources.push({
+    name: "InvestorGain financials",
+    ok: failed.length === 0,
+    count: details.size,
+    error: failed.length
+      ? `${failed.length} of ${targets.length} failed: ${String(failed[0].reason?.message ?? failed[0].reason)}`
+      : undefined,
+  });
+
+  return { ipos, sources, details };
 }

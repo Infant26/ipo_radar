@@ -1,11 +1,13 @@
-import type { FinancialPeriod, FundamentalsData, Ipo, IpoStatus, SourceStatus } from "./types";
+import type { DetailData, FinancialPeriod, FundamentalsData, GmpPoint, Ipo, IpoStatus, SourceStatus } from "./types";
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36";
 
 const IG_BASE = "https://www.investorgain.com";
-const IG_GMP_URL = `${IG_BASE}/report/live-ipo-gmp/331/`;
-const IG_SUB_URL = `${IG_BASE}/report/ipo-subscription-live/333/ipo/`;
+const IG_API = "https://webnodejs.investorgain.com/cloud/v2/report/data-read";
+// Report ids on InvestorGain: 331 = live GMP, 333 = live subscription
+const GMP_REPORT = { id: 331, page: `${IG_BASE}/report/ipo-gmp-live/331/` };
+const SUB_REPORT = { id: 333, page: `${IG_BASE}/report/ipo-subscription-live/333/ipo/` };
 
 async function fetchHtml(url: string, timeoutMs = 15000, revalidate?: number): Promise<string> {
   const res = await fetch(url, {
@@ -96,6 +98,32 @@ function extractTable(html: string): Record<string, unknown>[] {
   return obj.reportTableData;
 }
 
+/**
+ * Rows of an InvestorGain report. The page's server-rendered HTML can be
+ * hours old (it's cached on their side), so read the same JSON API the page
+ * itself polls, and only fall back to the HTML if that fails.
+ */
+async function fetchReport(report: { id: number; page: string }): Promise<Record<string, unknown>[]> {
+  const ist = new Date(Date.now() + 5.5 * 3600_000); // read UTC fields as IST
+  const y = ist.getUTCFullYear();
+  const m = ist.getUTCMonth() + 1;
+  const fy = m >= 4 ? `${y}-${String((y + 1) % 100).padStart(2, "0")}` : `${y - 1}-${String(y % 100).padStart(2, "0")}`;
+  const v = `${ist.getUTCHours()}-${ist.getUTCMinutes()}`;
+  try {
+    const res = await fetch(`${IG_API}/${report.id}/1/${m}/${y}/${fy}/0/all?search=&v=${v}`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10000),
+      headers: { "User-Agent": UA, Accept: "application/json", Referer: report.page, Origin: IG_BASE },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = (await res.json()) as { reportTableData?: Record<string, unknown>[] };
+    if (!Array.isArray(json.reportTableData) || !json.reportTableData.length) throw new Error("empty");
+    return json.reportTableData;
+  } catch {
+    return extractTable(await fetchHtml(report.page));
+  }
+}
+
 /** HTML table → rows of cell text */
 function tableRows(html: string): string[][] {
   return [...html.matchAll(/<tr[\s\S]*?<\/tr>/g)].map((r) =>
@@ -112,12 +140,14 @@ type RawIpo = Omit<
   | "verdict"
   | "scoreParts"
   | "fundamentals"
+  | "gmpHistory"
+  | "gmpDayChange"
 >;
 
 // ---------- InvestorGain ----------
 
 async function fetchInvestorGain(): Promise<RawIpo[]> {
-  const rows = extractTable(await fetchHtml(IG_GMP_URL));
+  const rows = await fetchReport(GMP_REPORT);
   return rows
     .filter((r) => r["~IPO_Category"] === "IPO") // mainboard only
     .map((r): RawIpo => {
@@ -170,7 +200,7 @@ interface SubRow {
 }
 
 async function fetchInvestorGainSubs(): Promise<Map<string, SubRow>> {
-  const rows = extractTable(await fetchHtml(IG_SUB_URL));
+  const rows = await fetchReport(SUB_REPORT);
   const map = new Map<string, SubRow>();
   for (const r of rows) {
     if (r["~IPO_Category"] !== "IPO") continue;
@@ -190,9 +220,30 @@ async function fetchInvestorGainSubs(): Promise<Map<string, SubRow>> {
 
 // ---------- InvestorGain IPO detail page (financials) ----------
 
-/** Financials only change when a new prospectus is filed; don't re-download them on every refresh. */
-const DETAIL_TTL_S = 6 * 60 * 60;
-const detailCache = new Map<string, { at: number; data: FundamentalsData }>();
+/**
+ * Detail pages are big (~400 KB each) and financials rarely change, so don't
+ * re-download them on every refresh. Kept to an hour because the page also
+ * carries the GMP history used for "vs yesterday", and the cache is keyed by
+ * the IST date so a new day never reuses yesterday's copy.
+ */
+const DETAIL_TTL_S = 60 * 60;
+const detailCache = new Map<string, { at: number; data: DetailData }>();
+
+const istDate = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+
+function parseGmpHistory(payload: string): GmpPoint[] {
+  const html = payload.match(/<table class="gmp-table[\s\S]*?<\/table>/)?.[0];
+  if (!html) return [];
+  return tableRows(html)
+    .slice(1)
+    .map((cells) => {
+      const at = cells[0]?.match(/^\d{1,2}-[A-Za-z]{3}(\s+\d{1,2}:\d{2})?/)?.[0];
+      // "₹93 (34.32%) ▲" → 93; "₹-- (0.00%)" → null
+      const g = cells[1]?.match(/₹\s*(-?[\d,]+(?:\.\d+)?)/)?.[1];
+      return at ? { at, gmp: g !== undefined ? Number(g.replace(/,/g, "")) : null } : null;
+    })
+    .filter((p): p is GmpPoint => p !== null);
+}
 
 const median = (xs: number[]) => {
   if (!xs.length) return null;
@@ -244,11 +295,13 @@ function parsePeers(payload: string, company: string): { name: string; pe: numbe
     .map((r) => ({ name: r[0].replace(/\s+(ltd|limited)\.?$/i, ""), pe: num(r[peCol]) }));
 }
 
-async function fetchDetail(url: string): Promise<FundamentalsData> {
-  const hit = detailCache.get(url);
+async function fetchDetail(url: string): Promise<DetailData> {
+  const key = `${istDate()} ${url}`;
+  const hit = detailCache.get(key);
   if (hit && Date.now() - hit.at < DETAIL_TTL_S * 1000) return hit.data;
 
-  const payload = flightPayload(await fetchHtml(url, 12000, DETAIL_TTL_S));
+  // Date in the URL so Vercel's data cache also starts fresh each IST day
+  const payload = flightPayload(await fetchHtml(`${url}?d=${istDate()}`, 12000, DETAIL_TTL_S));
   const info = (extractJson(payload, "ipoData") as Record<string, unknown>[])[0] ?? {};
   const n = (k: string) => {
     const v = info[k];
@@ -275,14 +328,16 @@ async function fetchDetail(url: string): Promise<FundamentalsData> {
     promoterPost: n("promoter_shareholding_post_issue"),
     marketCapCr: n("market_cap"),
   };
-  detailCache.set(url, { at: Date.now(), data });
-  return data;
+  const detail: DetailData = { fundamentals: data, gmpHistory: parseGmpHistory(payload) };
+  for (const k of detailCache.keys()) if (!k.startsWith(istDate())) detailCache.delete(k);
+  detailCache.set(key, { at: Date.now(), data: detail });
+  return detail;
 }
 
 export async function scrapeAll(): Promise<{
   ipos: RawIpo[];
   sources: SourceStatus[];
-  details: Map<string, FundamentalsData>;
+  details: Map<string, DetailData>;
 }> {
   const [ig, subs] = await Promise.allSettled([fetchInvestorGain(), fetchInvestorGainSubs()]);
 
@@ -305,7 +360,7 @@ export async function scrapeAll(): Promise<{
   // Financials for the IPOs you can still apply for
   const targets = ipos.filter((i) => (i.status === "open" || i.status === "upcoming") && i.url);
   const results = await Promise.allSettled(targets.map((i) => fetchDetail(i.url!)));
-  const details = new Map<string, FundamentalsData>();
+  const details = new Map<string, DetailData>();
   results.forEach((r, idx) => {
     if (r.status === "fulfilled") details.set(targets[idx].id, r.value);
   });

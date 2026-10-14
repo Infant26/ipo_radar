@@ -1,9 +1,17 @@
-import type { FundamentalsData, Ipo, ScorePart, Verdict } from "./types";
+import type { DetailData, GmpPoint, Ipo, ScorePart, Verdict } from "./types";
 import { scoreFundamentals } from "./fundamentals";
 
 type RawIpo = Omit<
   Ipo,
-  "estListing" | "profitPerLot" | "minInvestment" | "score" | "verdict" | "scoreParts" | "fundamentals"
+  | "estListing"
+  | "profitPerLot"
+  | "minInvestment"
+  | "score"
+  | "verdict"
+  | "scoreParts"
+  | "fundamentals"
+  | "gmpHistory"
+  | "gmpDayChange"
 >;
 
 const clamp = (v: number, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, v));
@@ -117,7 +125,25 @@ export function scoreIpo(ipo: RawIpo): Pick<Ipo, "score" | "verdict" | "scorePar
   return { score, verdict, scoreParts: parts };
 }
 
-export function enrich(ipo: RawIpo, details?: FundamentalsData | null): Ipo {
+const MON = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+/** "13-Oct 23:37" → "13 Oct"; null if it can't be read */
+const dayOf = (at: string) => {
+  const m = at.match(/^(\d{1,2})-([A-Za-z]{3})/);
+  return m && MON.includes(m[2].toLowerCase()) ? `${Number(m[1])} ${m[2]}` : null;
+};
+
+/** Current GMP vs the last entry the source logged before today (IST). */
+function dayChange(gmp: number | null, history: GmpPoint[]): Ipo["gmpDayChange"] {
+  if (gmp === null) return null;
+  const today = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" })
+    .format(new Date())
+    .replace(/^(\d+)\s+(\w{3}).*$/, "$1 $2");
+  const prev = history.find((p) => p.gmp !== null && dayOf(p.at) !== null && dayOf(p.at)!.toLowerCase() !== today.toLowerCase());
+  return prev ? { since: dayOf(prev.at)!, from: prev.gmp!, change: gmp - prev.gmp! } : null;
+}
+
+export function enrich(ipo: RawIpo, detail?: DetailData | null): Ipo {
   const estListing = ipo.price && ipo.gmp !== null ? ipo.price + ipo.gmp : null;
   const profitPerLot = ipo.lot && ipo.gmp !== null ? ipo.lot * ipo.gmp : null;
   const minInvestment = ipo.lot && ipo.price ? ipo.lot * ipo.price : null;
@@ -125,5 +151,15 @@ export function enrich(ipo: RawIpo, details?: FundamentalsData | null): Ipo {
   const scored = live ? scoreIpo(ipo) : { score: null, verdict: null, scoreParts: [] };
   // Without a price band the GMP can't be turned into a % gain, so don't rank it yet.
   if (live && !ipo.price) Object.assign(scored, { score: null, verdict: null });
-  return { ...ipo, estListing, profitPerLot, minInvestment, ...scored, fundamentals: scoreFundamentals(details) };
+  const gmpHistory = detail?.gmpHistory ?? [];
+  return {
+    ...ipo,
+    estListing,
+    profitPerLot,
+    minInvestment,
+    ...scored,
+    fundamentals: scoreFundamentals(detail?.fundamentals),
+    gmpHistory,
+    gmpDayChange: dayChange(ipo.gmp, gmpHistory),
+  };
 }

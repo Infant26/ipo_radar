@@ -31,6 +31,10 @@ export interface Ipo {
   gmpLow: number | null;
   gmpHigh: number | null;
   gmpUpdatedAt: string | null;
+  /** InvestorGain's GMP log, newest first (one closing entry per day plus today's latest) */
+  gmpHistory: GmpPoint[];
+  /** Change vs the last GMP recorded before today */
+  gmpDayChange: { since: string; from: number; change: number } | null;
   rating: number | null;
   pe: number | null;
   openDate: string | null;
@@ -81,6 +85,17 @@ export interface FundamentalsData {
   promoterPre: number | null;
   promoterPost: number | null;
   marketCapCr: number | null;
+}
+
+export interface GmpPoint {
+  /** as shown by the source, e.g. "13-Oct 23:37" */
+  at: string;
+  gmp: number | null;
+}
+
+export interface DetailData {
+  fundamentals: FundamentalsData;
+  gmpHistory: GmpPoint[];
 }
 
 export type FundVerdict = "Strong" | "Fair" | "Weak" | "Poor";

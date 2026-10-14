@@ -3,7 +3,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FundVerdict, Ipo, IpoResponse, Verdict } from "@/lib/types";
 
-const PREV_KEY = "ipo-radar:prev-gmp";
+const STORE_KEY = "ipo-radar:gmp-v2";
+const LEGACY_KEY = "ipo-radar:prev-gmp";
+
+/** Last GMP seen in this browser, plus the most recent move (kept until the GMP moves again). */
+interface Seen {
+  gmp: number;
+  move?: number;
+  /** when the move happened, as the source reports it ("14-Oct 12:02") */
+  at?: string;
+}
 
 type Tab = "apply" | "past";
 type Filter = "all" | "open" | "upcoming";
@@ -76,19 +85,27 @@ function timeAgo(iso: string, now: number) {
   return `${Math.round(m / 60)} h ago`;
 }
 
-function readPrev(): Record<string, number> {
+function readSeen(): Record<string, Seen> {
   try {
-    return JSON.parse(localStorage.getItem(PREV_KEY) ?? "{}");
+    const v2 = localStorage.getItem(STORE_KEY);
+    if (v2) return JSON.parse(v2);
+    // Carry over the baseline saved by the previous version
+    const legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) ?? "{}") as Record<string, number>;
+    return Object.fromEntries(Object.entries(legacy).map(([k, gmp]) => [k, { gmp }]));
   } catch {
     return {};
   }
 }
 
+const arrow = (n: number) => (n > 0 ? "▲" : "▼");
+const money = (n: number) => `₹${Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+
 export default function Dashboard() {
   const [data, setData] = useState<IpoResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [deltas, setDeltas] = useState<Record<string, number>>({});
+  const [seen, setSeen] = useState<Record<string, Seen>>({});
+  const [justChanged, setJustChanged] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("apply");
   const [filter, setFilter] = useState<Filter>("all");
@@ -110,23 +127,27 @@ export default function Dashboard() {
         );
       }
 
-      // GMP change since the previous refresh
-      const prev = readPrev();
-      const next: Record<string, number> = {};
-      const d: Record<string, number> = {};
-      let changed = 0;
+      // Compare with the GMPs this browser saw last time. A move stays on
+      // screen until the GMP moves again, so a quiet refresh doesn't hide it.
+      const prev = readSeen();
+      const next: Record<string, Seen> = {};
+      const changedNow = new Set<string>();
       for (const ipo of json.ipos) {
         if (ipo.gmp === null) continue;
-        next[ipo.name] = ipo.gmp;
-        if (ipo.name in prev && prev[ipo.name] !== ipo.gmp) {
-          d[ipo.name] = ipo.gmp - prev[ipo.name];
-          changed++;
+        const p = prev[ipo.name];
+        if (p && p.gmp !== ipo.gmp) {
+          next[ipo.name] = { gmp: ipo.gmp, move: ipo.gmp - p.gmp, at: ipo.gmpUpdatedAt ?? undefined };
+          changedNow.add(ipo.name);
+        } else {
+          next[ipo.name] = p ?? { gmp: ipo.gmp };
         }
       }
+      const changed = changedNow.size;
       try {
-        localStorage.setItem(PREV_KEY, JSON.stringify(next));
+        localStorage.setItem(STORE_KEY, JSON.stringify(next));
       } catch {}
-      setDeltas(d);
+      setSeen(next);
+      setJustChanged(changedNow);
       setData(json);
       setNow(Date.now());
 
@@ -343,7 +364,8 @@ export default function Dashboard() {
                   key={ipo.id}
                   ipo={ipo}
                   rank={idx + 1}
-                  delta={deltas[ipo.name]}
+                  seen={seen[ipo.name]}
+                  flash={justChanged.has(ipo.name)}
                   open={expanded === ipo.id}
                   onToggle={() => setExpanded(expanded === ipo.id ? null : ipo.id)}
                 />
@@ -391,6 +413,11 @@ export default function Dashboard() {
               (15%), valuation against listed peers and PEG (15%), debt (10%) and how much of the issue is fresh money
               (5%). Ratios are judged against standard bands, e.g. ROE above 25% is excellent and debt/equity under 0.3
               is conservative.
+            </p>
+            <p>
+              <strong>GMP moves:</strong> the small ▲/▼ badge beside a GMP is the last change since you last
+              refreshed in this browser, and it stays until the GMP moves again. The line underneath compares
+              today’s GMP with the last one logged before today, so it’s the same on every device.
             </p>
             <p>
               Both scores leave out data that isn’t available rather than scoring it as zero. Click any row to see the
@@ -474,13 +501,15 @@ function band(v: number | null, bands: [number, string][], last: string) {
 function IpoRow({
   ipo,
   rank,
-  delta,
+  seen,
+  flash,
   open,
   onToggle,
 }: {
   ipo: Ipo;
   rank: number;
-  delta?: number;
+  seen?: Seen;
+  flash: boolean;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -545,16 +574,38 @@ function IpoRow({
           className="c-b"
         />
         <div className="r c-a" data-l="GMP">
-          <span className={`num big ${tone(ipo.gmp)}`}>{inr(ipo.gmp, 2)}</span>
+          <span className="gmp-line">
+            {seen?.move ? (
+              <span
+                className={`move ${seen.move > 0 ? "pos" : "neg"}`}
+                title={`Last move you saw: ${seen.move > 0 ? "up" : "down"} ${money(seen.move)}${seen.at ? ` (updated ${seen.at})` : ""}`}
+              >
+                {arrow(seen.move)}
+                {money(seen.move).slice(1)}
+                {seen.at && <small> {seen.at.replace(/^\S+\s/, "")}</small>}
+              </span>
+            ) : null}
+            <span className={`num big ${tone(ipo.gmp)} ${flash ? "flash" : ""}`}>{inr(ipo.gmp, 2)}</span>
+          </span>
           <span className="num small nowrap">
             <span className={tone(ipo.gmpPct)}>{pct(ipo.gmpPct)}</span>
             <span className="muted"> on {inr(ipo.price)}</span>
-            {delta !== undefined && delta !== 0 && (
-              <span className={`delta ${delta > 0 ? "pos" : "neg"}`} title="Change since your last refresh">
-                {delta > 0 ? "▲" : "▼"} {Math.abs(delta)}
-              </span>
-            )}
           </span>
+          {ipo.gmpDayChange && (
+            <span
+              className="num small nowrap"
+              title={`${money(ipo.gmpDayChange.from)} on ${ipo.gmpDayChange.since}, the last GMP logged before today`}
+            >
+              {ipo.gmpDayChange.change === 0 ? (
+                <span className="muted">No change</span>
+              ) : (
+                <span className={tone(ipo.gmpDayChange.change)}>
+                  {arrow(ipo.gmpDayChange.change)} {money(ipo.gmpDayChange.change)}
+                </span>
+              )}
+              <span className="muted"> vs {ipo.gmpDayChange.since}</span>
+            </span>
+          )}
         </div>
         <div className="r c-b" data-l="Profit / lot">
           <span className={`num big ${tone(ipo.profitPerLot)}`}>{inr(ipo.profitPerLot)}</span>
@@ -675,6 +726,26 @@ function IpoRow({
                 <div><dt>Retail allotment odds</dt><dd>{s.retail && s.retail > 1 ? `~1 in ${Math.ceil(s.retail)}` : s.retail !== null ? "Very likely" : "–"}</dd></div>
                 <div><dt>GMP updated</dt><dd>{ipo.gmpUpdatedAt ?? "–"}</dd></div>
               </dl>
+              {ipo.gmpHistory.length > 0 && (
+                <>
+                  <h3 className="sub-h">GMP history</h3>
+                  <ol className="history">
+                    {ipo.gmpHistory.slice(0, 8).map((h, i) => {
+                      const older = ipo.gmpHistory[i + 1]?.gmp;
+                      const d = h.gmp !== null && older != null ? h.gmp - older : null;
+                      return (
+                        <li key={h.at}>
+                          <span className="muted">{h.at}</span>
+                          <span className="num">{inr(h.gmp, 2)}</span>
+                          <span className={`num ${d ? tone(d) : "muted"}`}>
+                            {d === null ? "" : d === 0 ? "–" : `${arrow(d)} ${money(d)}`}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </>
+              )}
             </div>
           </div>
 

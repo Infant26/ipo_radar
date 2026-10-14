@@ -30,8 +30,6 @@ export interface Ipo {
   gmpPct: number | null;
   gmpLow: number | null;
   gmpHigh: number | null;
-  /** GMP reported by the second source, for cross-checking */
-  gmpAlt: number | null;
   gmpUpdatedAt: string | null;
   rating: number | null;
   pe: number | null;
@@ -41,7 +39,7 @@ export interface Ipo {
   listingDate: string | null;
   subscription: Subscription;
   url: string | null;
-  source: "investorgain" | "ipowatch";
+  source: "investorgain";
   // derived
   estListing: number | null;
   profitPerLot: number | null;

@@ -3,7 +3,7 @@
 Live dashboard for Indian **mainboard** IPOs: current GMP, subscription (QIB / NII / Retail), and an
 **Apply score** that ranks open and upcoming issues.
 
-- `app/api/ipos/route.ts`: scrapes InvestorGain (GMP + subscription) and IPOWatch (second GMP opinion, fallback) on every request. Nothing is cached, so the **Refresh** button always pulls fresh numbers.
+- `app/api/ipos/route.ts`: scrapes InvestorGain (GMP + subscription) on every request, so the **Refresh** button always pulls fresh numbers. Each open/upcoming IPO's financials, KPIs and peers come from its InvestorGain detail page (cached 6h).
 - `lib/score.ts`: apply score (0–100): listing gain from GMP 45%, QIB demand 20%, overall subscription vs. bidding progress 15%, GMP momentum 10%, buzz rating 10%. Missing data is excluded, not scored as zero.
 - `vercel.json` pins the function to Mumbai (`bom1`), close to the source sites.
 

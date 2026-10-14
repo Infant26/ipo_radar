@@ -399,7 +399,7 @@ export default function Dashboard() {
             <p className="muted">
               GMP is an unofficial grey-market indicator and can change quickly. Financials are the company’s restated
               figures from the prospectus. This dashboard is for information only and is not investment advice. Data
-              from InvestorGain and IPOWatch.
+              from InvestorGain.
             </p>
           </footer>
         </>
@@ -672,7 +672,6 @@ function IpoRow({
                 <div><dt>Allotment</dt><dd>{fmtDate(ipo.allotmentDate)}</dd></div>
                 <div><dt>Listing</dt><dd>{fmtDate(ipo.listingDate)}</dd></div>
                 <div><dt>GMP range</dt><dd>{ipo.gmpLow !== null ? `${inr(ipo.gmpLow, 2)} to ${inr(ipo.gmpHigh, 2)}` : "–"}</dd></div>
-                <div><dt>IPOWatch GMP</dt><dd>{inr(ipo.gmpAlt, 2)}</dd></div>
                 <div><dt>Retail allotment odds</dt><dd>{s.retail && s.retail > 1 ? `~1 in ${Math.ceil(s.retail)}` : s.retail !== null ? "Very likely" : "–"}</dd></div>
                 <div><dt>GMP updated</dt><dd>{ipo.gmpUpdatedAt ?? "–"}</dd></div>
               </dl>
@@ -681,7 +680,7 @@ function IpoRow({
 
           {ipo.url && (
             <a className="more" href={ipo.url} target="_blank" rel="noreferrer">
-              Full details on {ipo.source === "investorgain" ? "InvestorGain" : "IPOWatch"} ↗
+              Full details on InvestorGain ↗
             </a>
           )}
         </div>

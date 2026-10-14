@@ -190,7 +190,7 @@ function parseRange(s: string): [string | null, string | null] {
 
 async function fetchIpoWatch(): Promise<RawIpo[]> {
   // Secondary source: don't let a slow response hold up the whole refresh.
-  const html = await fetchHtml(IPOWATCH_URL, 8000);
+  const html = await fetchHtml(IPOWATCH_URL, 5000);
   // The first table on the page is mainboard; the second is SME.
   const table = html.match(/<table[\s\S]*?<\/table>/)?.[0];
   if (!table) throw new Error("GMP table not found");

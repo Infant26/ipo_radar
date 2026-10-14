@@ -120,9 +120,9 @@ export function enrich(ipo: RawIpo): Ipo {
   const estListing = ipo.price && ipo.gmp !== null ? ipo.price + ipo.gmp : null;
   const profitPerLot = ipo.lot && ipo.gmp !== null ? ipo.lot * ipo.gmp : null;
   const minInvestment = ipo.lot && ipo.price ? ipo.lot * ipo.price : null;
-  const scored =
-    ipo.status === "open" || ipo.status === "upcoming"
-      ? scoreIpo(ipo)
-      : { score: null, verdict: null, scoreParts: [] };
+  const live = ipo.status === "open" || ipo.status === "upcoming";
+  const scored = live ? scoreIpo(ipo) : { score: null, verdict: null, scoreParts: [] };
+  // Without a price band the GMP can't be turned into a % gain, so don't rank it yet.
+  if (live && !ipo.price) Object.assign(scored, { score: null, verdict: null });
   return { ...ipo, estListing, profitPerLot, minInvestment, ...scored };
 }

@@ -395,7 +395,11 @@ function IpoRow({
           <div className="sbar">
             <i style={{ width: `${ipo.score ?? 0}%` }} className={ipo.verdict ? verdictClass[ipo.verdict] : ""} />
           </div>
-          {ipo.verdict && <span className={`verdict ${verdictClass[ipo.verdict]}`}>{ipo.verdict}</span>}
+          {ipo.verdict ? (
+            <span className={`verdict ${verdictClass[ipo.verdict]}`}>{ipo.verdict}</span>
+          ) : (
+            <span className="verdict v-avoid">{ipo.price ? "Not scored" : "Price band TBA"}</span>
+          )}
         </div>
         <div className="r" data-l="GMP">
           <span className={`num big ${tone(ipo.gmp)}`}>{inr(ipo.gmp, 2)}</span>

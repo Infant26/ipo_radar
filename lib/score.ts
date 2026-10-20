@@ -65,7 +65,7 @@ export function scoreIpo(ipo: RawIpo): Pick<Ipo, "score" | "verdict" | "scorePar
     detail:
       momentum === null
         ? "No GMP history"
-        : `₹${fmt(gmp!)} now, range ₹${fmt(gmpLow!)}–₹${fmt(gmpHigh!)}`,
+        : `₹${fmt(gmp!)} now, range ₹${fmt(gmpLow!)} to ₹${fmt(gmpHigh!)}`,
   });
 
   // 3. Overall demand (only once bidding has started)

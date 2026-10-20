@@ -314,6 +314,14 @@ h1 { margin: 0; font-size: 26px; line-height: 1.1; letter-spacing: -0.03em; font
 .move.pos { color: var(--emerald-ink); background: color-mix(in oklab, var(--emerald) 15%, transparent); }
 .move.neg { color: var(--rose-ink); background: color-mix(in oklab, var(--rose) 14%, transparent); }
 .move small { font-size: 10px; font-weight: 500; opacity: .75; margin-left: 2px; }
+.agree { display: inline-flex; vertical-align: -2px; margin-right: 4px; }
+.agree.ok { color: var(--emerald); }
+.agree.differ { color: var(--saffron); }
+.src-tag {
+  display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 5px; vertical-align: 1px;
+  font-family: var(--font-sans), sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
+  color: var(--cyan-ink); background: color-mix(in oklab, var(--cyan) 15%, transparent);
+}
 .day > span:first-child { display: inline-flex; align-items: center; gap: 3px; }
 .flash { animation: flash 1.8s var(--ease); border-radius: 6px; }
 @keyframes flash {
@@ -372,6 +380,11 @@ h1 { margin: 0; font-size: 26px; line-height: 1.1; letter-spacing: -0.03em; font
 .facts dd { margin: 1px 0 0; font-weight: 550; font-variant-numeric: tabular-nums; }
 .sub-h { margin-top: 22px !important; }
 .spark { display: block; width: 100%; max-width: 420px; height: auto; margin: 2px 0 8px; overflow: visible; }
+.quotes { list-style: none; margin: 0 0 6px; padding: 0; font-size: 13px; }
+.quotes li { display: grid; grid-template-columns: 1fr auto; column-gap: 12px; padding: 4px 0; }
+.quotes li + li { border-top: 1px solid var(--line); }
+.quotes li > .num { text-align: right; font-weight: 650; }
+.quotes li > .small { grid-column: 1 / -1; }
 .history { list-style: none; margin: 0; padding: 0; font-size: 13px; }
 .history li { display: grid; grid-template-columns: 1fr auto 76px; gap: 12px; padding: 4px 0; }
 .history li + li { border-top: 1px solid var(--line); }

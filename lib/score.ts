@@ -48,7 +48,10 @@ export function scoreIpo(ipo: RawIpo): Pick<Ipo, "score" | "verdict" | "scorePar
     label: "Expected listing gain",
     weight: 45,
     value: ipo.gmpPct === null ? 0 : clamp(ipo.gmpPct / 40),
-    detail: ipo.gmpPct === null ? "No GMP yet" : `${fmt(ipo.gmpPct)}% GMP (40%+ = full marks)`,
+    detail:
+      ipo.gmpPct === null
+        ? "No GMP yet"
+        : `${fmt(ipo.gmpPct)}% GMP${ipo.gmpQuotes.length > 1 ? ` (median of ${ipo.gmpQuotes.length} sources)` : ""} (40%+ = full marks)`,
   });
 
   // 2. GMP momentum — is today's GMP near its peak, or has it been sliding?
@@ -180,6 +183,7 @@ export function enrich(ipo: RawIpo, detail?: DetailData | null): Ipo {
     ...scored,
     fundamentals: scoreFundamentals(detail?.fundamentals),
     gmpHistory,
-    gmpDayChange: dayChange(ipo.gmp, gmpHistory),
+    // The history is InvestorGain's, so compare it with InvestorGain's own current GMP
+    gmpDayChange: dayChange(ipo.gmpQuotes.find((q) => q.source === "InvestorGain")?.gmp ?? null, gmpHistory),
   };
 }

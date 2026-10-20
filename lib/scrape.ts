@@ -1,4 +1,5 @@
 import type { DetailData, FinancialPeriod, FundamentalsData, GmpPoint, Ipo, IpoStatus, SourceStatus } from "./types";
+import { agreement, fetchIpoji, fetchNse, findMatch, median as medianOf, type IpojiRow, type NseIssue } from "./sources";
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36";
@@ -191,7 +192,13 @@ async function fetchInvestorGain(): Promise<(RawIpo & Listed)[]> {
           nii: null,
           retail: null,
           updatedAt: null,
+          source: /x$/i.test(sub) ? "InvestorGain" : null,
         },
+        gmpQuotes:
+          gmp !== null
+            ? [{ source: "InvestorGain", gmp, updatedAt: text(String(r["Updated-On"] ?? "")) || null }]
+            : [],
+        gmpAgreement: null,
         url: r["~urlrewrite_folder_name"] ? IG_BASE + r["~urlrewrite_folder_name"] : null,
         source: "investorgain",
         gmpAtOpen: gmpOn(r.Open),
@@ -209,6 +216,7 @@ interface SubRow {
   nii: number | null;
   retail: number | null;
   updatedAt: string | null;
+  source: string | null;
 }
 
 async function fetchInvestorGainSubs(): Promise<Map<string, SubRow>> {
@@ -225,6 +233,7 @@ async function fetchInvestorGainSubs(): Promise<Map<string, SubRow>> {
       nii: num(r.NII),
       retail: num(r.RII),
       updatedAt: text(totalHtml.replace(/^<b>[\d.]+<\/b>/, "")) || null,
+      source: "InvestorGain",
     });
   }
   return map;
@@ -346,31 +355,121 @@ async function fetchDetail(url: string): Promise<DetailData> {
   return detail;
 }
 
+/** Build a basic row from IPOji, for IPOs InvestorGain doesn't list (or when it's down). */
+function fromIpoji(row: IpojiRow): RawIpo & Listed {
+  const price = row.priceHigh;
+  return {
+    id: `ipoji-${row.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    name: row.name,
+    status: row.status,
+    statusCode: row.status,
+    price,
+    lot: null,
+    sizeCr: null,
+    gmp: row.gmp,
+    gmpPct: row.gmp !== null && price ? (row.gmp / price) * 100 : null,
+    gmpLow: null,
+    gmpHigh: null,
+    gmpUpdatedAt: row.updatedAt,
+    gmpQuotes: row.gmp !== null ? [{ source: "IPOji", gmp: row.gmp, updatedAt: row.updatedAt }] : [],
+    gmpAgreement: null,
+    rating: null,
+    pe: null,
+    openDate: row.openDate,
+    closeDate: row.closeDate,
+    allotmentDate: null,
+    listingDate: null,
+    subscription: { total: null, qib: null, nii: null, retail: null, updatedAt: null, source: null },
+    url: row.url,
+    source: "investorgain",
+    gmpAtOpen: null,
+    gmpAtClose: null,
+    gmpAtListing: null,
+    listingPrice: null,
+    listingGainPct: null,
+  };
+}
+
 export async function scrapeAll(): Promise<{
   ipos: (RawIpo & Listed)[];
   sources: SourceStatus[];
   details: Map<string, DetailData>;
 }> {
-  const [ig, subs] = await Promise.allSettled([fetchInvestorGain(), fetchInvestorGainSubs()]);
+  const [ig, subs, ipoji, nse] = await Promise.allSettled([
+    fetchInvestorGain(),
+    fetchInvestorGainSubs(),
+    fetchIpoji(),
+    fetchNse(),
+  ]);
 
   const err = (r: PromiseSettledResult<unknown>) =>
     r.status === "rejected" ? String((r.reason as Error)?.message ?? r.reason) : undefined;
+  const count = (r: PromiseSettledResult<{ length: number } | Map<unknown, unknown>>) =>
+    r.status === "fulfilled" ? ("size" in r.value ? r.value.size : r.value.length) : 0;
 
   const sources: SourceStatus[] = [
-    { name: "InvestorGain GMP", ok: ig.status === "fulfilled", count: ig.status === "fulfilled" ? ig.value.length : 0, error: err(ig) },
-    { name: "InvestorGain subscription", ok: subs.status === "fulfilled", count: subs.status === "fulfilled" ? subs.value.size : 0, error: err(subs) },
+    { name: "InvestorGain GMP", ok: ig.status === "fulfilled", count: count(ig), error: err(ig) },
+    { name: "IPOji GMP", ok: ipoji.status === "fulfilled", count: count(ipoji), error: err(ipoji) },
+    { name: "NSE subscription", ok: nse.status === "fulfilled", count: count(nse), error: err(nse) },
+    { name: "InvestorGain subscription", ok: subs.status === "fulfilled", count: count(subs), error: err(subs) },
   ];
 
-  if (ig.status !== "fulfilled") return { ipos: [], sources, details: new Map() };
-
+  const ipojiRows = ipoji.status === "fulfilled" ? ipoji.value : [];
+  const nseIssues: NseIssue[] = nse.status === "fulfilled" ? nse.value : [];
   const subMap = subs.status === "fulfilled" ? subs.value : new Map<string, SubRow>();
-  const ipos = ig.value.map((ipo) => {
-    const sub = subMap.get(nameKey(ipo.name));
-    return sub ? { ...ipo, subscription: { ...sub, total: sub.total ?? ipo.subscription.total } } : ipo;
+
+  // InvestorGain is the backbone (financials, history, listing results). If it's down,
+  // fall back to IPOji's list so the dashboard still shows GMPs and NSE subscription.
+  const base: (RawIpo & Listed)[] = ig.status === "fulfilled" ? ig.value : ipojiRows.map(fromIpoji);
+  const usedIpoji = new Set<IpojiRow>();
+
+  const ipos = base.map((ipo) => {
+    // GMP: combine every source that quotes one
+    const quotes = [...ipo.gmpQuotes];
+    const other = ig.status === "fulfilled" ? findMatch(ipo.name, ipojiRows, (r) => r.name) : undefined;
+    if (other) {
+      usedIpoji.add(other);
+      if (other.gmp !== null) quotes.push({ source: "IPOji", gmp: other.gmp, updatedAt: other.updatedAt });
+    }
+    const price = ipo.price ?? other?.priceHigh ?? null;
+    const gmp = quotes.length ? medianOf(quotes.map((q) => q.gmp)) : ipo.gmp;
+
+    // Subscription: NSE's official figures first, then InvestorGain's
+    const official = findMatch(ipo.name, nseIssues, (n) => n.name);
+    const igSub = subMap.get(nameKey(ipo.name));
+    const subscription = official
+      ? official.subscription
+      : igSub
+        ? { ...igSub, total: igSub.total ?? ipo.subscription.total }
+        : ipo.subscription;
+
+    return {
+      ...ipo,
+      price,
+      gmp,
+      gmpPct: gmp !== null && price ? (gmp / price) * 100 : null,
+      gmpQuotes: quotes,
+      gmpAgreement: agreement(quotes.map((q) => q.gmp), price),
+      openDate: ipo.openDate ?? other?.openDate ?? null,
+      closeDate: ipo.closeDate ?? other?.closeDate ?? null,
+      subscription,
+    };
   });
 
-  // Financials for the IPOs you can still apply for
-  const targets = ipos.filter((i) => (i.status === "open" || i.status === "upcoming") && i.url);
+  // New mainboard IPOs that only IPOji lists so far
+  if (ig.status === "fulfilled") {
+    for (const row of ipojiRows) {
+      if (usedIpoji.has(row) || (row.status !== "open" && row.status !== "upcoming")) continue;
+      if (findMatch(row.name, base, (b) => b.name)) continue;
+      const extra = fromIpoji(row);
+      ipos.push({ ...extra, gmpAgreement: agreement(extra.gmpQuotes.map((q) => q.gmp), extra.price) });
+    }
+  }
+
+  // Financials for the IPOs you can still apply for (InvestorGain detail pages only)
+  const targets = ipos.filter(
+    (i) => (i.status === "open" || i.status === "upcoming") && i.url?.startsWith(IG_BASE),
+  );
   const results = await Promise.allSettled(targets.map((i) => fetchDetail(i.url!)));
   const details = new Map<string, DetailData>();
   results.forEach((r, idx) => {
@@ -379,11 +478,14 @@ export async function scrapeAll(): Promise<{
   const failed = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
   sources.push({
     name: "InvestorGain financials",
-    ok: failed.length === 0,
+    ok: ig.status === "fulfilled" && failed.length === 0,
     count: details.size,
-    error: failed.length
-      ? `${failed.length} of ${targets.length} failed: ${String(failed[0].reason?.message ?? failed[0].reason)}`
-      : undefined,
+    error:
+      ig.status !== "fulfilled"
+        ? "skipped: InvestorGain GMP feed is down"
+        : failed.length
+          ? `${failed.length} of ${targets.length} failed: ${String(failed[0].reason?.message ?? failed[0].reason)}`
+          : undefined,
   });
 
   return { ipos, sources, details };

@@ -6,6 +6,15 @@ export interface Subscription {
   nii: number | null;
   retail: number | null;
   updatedAt: string | null;
+  /** where these figures came from: "NSE" (official exchange data) or "InvestorGain" */
+  source: string | null;
+}
+
+export interface GmpQuote {
+  source: string;
+  gmp: number;
+  /** as the source reports it */
+  updatedAt: string | null;
 }
 
 export interface ScorePart {
@@ -31,6 +40,10 @@ export interface Ipo {
   gmpLow: number | null;
   gmpHigh: number | null;
   gmpUpdatedAt: string | null;
+  /** GMP from each source that quotes one; `gmp` above is their median */
+  gmpQuotes: GmpQuote[];
+  /** "agree" when sources are within a small band, "differ" when not, "single" with one source */
+  gmpAgreement: "agree" | "differ" | "single" | null;
   /** GMP the source recorded on the opening day, closing day and listing day */
   gmpAtOpen: number | null;
   gmpAtClose: number | null;

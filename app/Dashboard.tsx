@@ -10,6 +10,7 @@ import {
   CheckCircle,
   Lightning,
   Scales,
+  SealCheck,
   Target,
   TrendDown,
   TrendUp,
@@ -19,8 +20,8 @@ import {
 import type { Flag, FundVerdict, Ipo, IpoResponse, Verdict } from "@/lib/types";
 import { CountUp, EASE_OUT, Ring, SPRING, Seg } from "./ui";
 
-const STORE_KEY = "ipo-radar:gmp-v2";
-const LEGACY_KEY = "ipo-radar:prev-gmp";
+// v3: GMP became the median of several sources, so older baselines aren't comparable
+const STORE_KEY = "ipo-radar:gmp-v3";
 const NA = "n/a";
 
 /** Last GMP seen in this browser, plus the most recent move (kept until the GMP moves again). */
@@ -98,11 +99,7 @@ function timeAgo(iso: string, now: number) {
 
 function readSeen(): Record<string, Seen> {
   try {
-    const v2 = localStorage.getItem(STORE_KEY);
-    if (v2) return JSON.parse(v2);
-    // Carry over the baseline saved by the previous version
-    const legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) ?? "{}") as Record<string, number>;
-    return Object.fromEntries(Object.entries(legacy).map(([k, gmp]) => [k, { gmp }]));
+    return JSON.parse(localStorage.getItem(STORE_KEY) ?? "{}");
   } catch {
     return {};
   }
@@ -287,7 +284,7 @@ export default function Dashboard() {
                 <i aria-hidden />
                 {failedSources.length
                   ? `${failedSources.length} source${failedSources.length > 1 ? "s" : ""} failed`
-                  : `Live, updated ${timeAgo(data.fetchedAt, now)}`}
+                  : `Live from ${new Set(data.sources.map((s) => s.name.split(" ")[0])).size} sources, updated ${timeAgo(data.fetchedAt, now)}`}
               </span>
             )}
             <motion.button
@@ -461,9 +458,15 @@ export default function Dashboard() {
                   Closed &amp; listed compares each listing with its final GMP. “vs GMP” is the actual gain minus the
                   gain GMP implied, in percentage points.
                 </p>
+                <p>
+                  <strong>Sources.</strong> GMP is the median of InvestorGain and IPOji; a green seal means they agree,
+                  an amber warning means they differ by more than 10% of the GMP. Subscription comes from NSE’s official
+                  bid data while NSE lists the issue, otherwise from InvestorGain. Financials, GMP history and listing
+                  results come from InvestorGain.
+                </p>
                 <p className="muted">
                   GMP is an unofficial grey-market indicator and changes quickly. Financials are the company’s restated
-                  prospectus figures. Information only, not investment advice. Data from InvestorGain.
+                  prospectus figures. Information only, not investment advice.
                 </p>
               </div>
             </footer>
@@ -629,6 +632,21 @@ function ScoreCell({
       </Ring>
       <span className={`verdict ${verdict ? cls : "v-none"}`}>{verdict ?? empty}</span>
     </div>
+  );
+}
+
+/** Marker beside the GMP: do the GMP sources agree? */
+function Agreement({ ipo }: { ipo: Ipo }) {
+  if (ipo.gmpAgreement !== "agree" && ipo.gmpAgreement !== "differ") return null;
+  const list = ipo.gmpQuotes.map((q) => `${q.source} ${fmtInr2(q.gmp)}`).join(", ");
+  return ipo.gmpAgreement === "agree" ? (
+    <span className="agree ok" title={`${ipo.gmpQuotes.length} sources agree: ${list}`} aria-label={`${ipo.gmpQuotes.length} sources agree`}>
+      <SealCheck size={13} weight="fill" />
+    </span>
+  ) : (
+    <span className="agree differ" title={`Sources differ: ${list}`} aria-label="GMP sources differ">
+      <Warning size={13} weight="fill" />
+    </span>
   );
 }
 
@@ -809,6 +827,7 @@ function IpoRow({
           </span>
           {ipo.price ? (
             <span className="num small nowrap">
+              <Agreement ipo={ipo} />
               <span className={tone(ipo.gmpPct)}>{pct(ipo.gmpPct)}</span>
               <span className="muted"> on {inr(ipo.price)}</span>
             </span>
@@ -849,7 +868,14 @@ function IpoRow({
             <span className="small muted">{ipo.status === "upcoming" ? `Bids open ${fmtDate(ipo.openDate)}` : "No data yet"}</span>
           ) : (
             <>
-              <span className="num">{x(s.total)}</span>
+              <span className="num">
+                {s.source === "NSE" && (
+                  <span className="src-tag" title={`Official NSE data${s.updatedAt ? `, ${s.updatedAt}` : ""}`}>
+                    NSE
+                  </span>
+                )}
+                {x(s.total)}
+              </span>
               <span className="num small muted nowrap" title="QIB, NII, Retail">
                 Q {short(s.qib)} N {short(s.nii)} R {short(s.retail)}
               </span>
@@ -971,8 +997,29 @@ function IpoRow({
                     <div><dt>Listing</dt><dd>{fmtDate(ipo.listingDate)}</dd></div>
                     <div><dt>GMP range</dt><dd>{ipo.gmpLow !== null ? `${inr(ipo.gmpLow, 2)} to ${inr(ipo.gmpHigh, 2)}` : NA}</dd></div>
                     <div><dt>Retail allotment odds</dt><dd>{s.retail && s.retail > 1 ? `About 1 in ${Math.ceil(s.retail)}` : s.retail !== null ? "Very likely" : NA}</dd></div>
-                    <div><dt>GMP updated</dt><dd>{ipo.gmpUpdatedAt ?? NA}</dd></div>
+                    <div><dt>Subscription data</dt><dd>{s.source ? `${s.source}${s.updatedAt ? `, ${s.updatedAt}` : ""}` : NA}</dd></div>
                   </dl>
+                  {ipo.gmpQuotes.length > 0 && (
+                    <>
+                      <h3 className="sub-h">GMP by source</h3>
+                      <ul className="quotes">
+                        {ipo.gmpQuotes.map((q) => (
+                          <li key={q.source}>
+                            <span>{q.source}</span>
+                            <span className="num">{fmtInr2(q.gmp)}</span>
+                            <span className="muted small">{q.updatedAt ?? ""}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="pd">
+                        {ipo.gmpAgreement === "differ"
+                          ? `Sources disagree by ${money(Math.max(...ipo.gmpQuotes.map((q) => q.gmp)) - Math.min(...ipo.gmpQuotes.map((q) => q.gmp)))}. The dashboard uses the median, ${inr(ipo.gmp, 2)}.`
+                          : ipo.gmpAgreement === "agree"
+                            ? `Sources agree. The dashboard uses the median, ${inr(ipo.gmp, 2)}.`
+                            : "Only one source quotes a GMP for this IPO so far."}
+                      </p>
+                    </>
+                  )}
                   {ipo.gmpHistory.length > 0 && (
                     <>
                       <h3 className="sub-h">GMP history</h3>
@@ -1157,7 +1204,10 @@ function PastList({ ipos }: { ipos: Ipo[] }) {
               <span className="small muted">{L ? "Actual" : "Expected"}</span>
             </div>
             <div className="r" data-l="Subscribed">
-              <span className="num">{x(ipo.subscription.total)}</span>
+              <span className="num">
+                {ipo.subscription.source === "NSE" && <span className="src-tag" title="Official NSE data">NSE</span>}
+                {x(ipo.subscription.total)}
+              </span>
             </div>
           </motion.div>
         );

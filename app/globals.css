@@ -258,7 +258,7 @@ h1 { margin: 0; font-size: 26px; line-height: 1.1; letter-spacing: -0.03em; font
 .list { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--shadow-sm); }
 .row {
   display: grid; align-items: center; gap: 16px;
-  grid-template-columns: 34px minmax(210px, 1.9fr) minmax(128px, 1fr) minmax(128px, 1fr) 1.1fr 1fr 1.05fr 20px;
+  grid-template-columns: 34px minmax(200px, 1.8fr) minmax(124px, .95fr) minmax(124px, .95fr) minmax(150px, 1.1fr) minmax(140px, 1fr) minmax(110px, .9fr) 20px;
   padding: 14px 18px; width: 100%; text-align: left; background: transparent; border: 0;
 }
 .item + .item > .row, .past .row + .row { border-top: 1px solid var(--line); }
@@ -447,10 +447,7 @@ h1 { margin: 0; font-size: 26px; line-height: 1.1; letter-spacing: -0.03em; font
 @media (max-width: 1080px) {
   .picks, .sk-picks { grid-template-columns: 1fr 1fr; }
   .pick-listing, .sk-picks .tile:first-child { grid-column: 1 / -1; }
-}
 
-@media (max-width: 920px) {
-  .wrap { padding: 20px 16px 40px; }
   .row.head { display: none; }
   .row, .past .row { grid-template-columns: 1fr 1fr; gap: 12px 14px; padding: 14px 16px; }
   .item > .row { grid-template-columns: 30px 1fr 1fr 20px; }
@@ -470,6 +467,10 @@ h1 { margin: 0; font-size: 26px; line-height: 1.1; letter-spacing: -0.03em; font
   .ratios, .facts { grid-template-columns: 1fr; }
   .track-stats { grid-template-columns: 1fr 1fr; }
   .foot { grid-template-columns: 1fr; gap: 8px; }
+}
+
+@media (max-width: 920px) {
+  .wrap { padding: 20px 16px 40px; }
 }
 
 @media (max-width: 560px) {

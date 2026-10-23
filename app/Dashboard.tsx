@@ -19,6 +19,7 @@ import {
 } from "@phosphor-icons/react";
 import type { Flag, FundVerdict, Ipo, IpoResponse, Verdict } from "@/lib/types";
 import { CountUp, EASE_OUT, Ring, SPRING, Seg } from "./ui";
+import TopNav from "./TopNav";
 
 // v3: GMP became the median of several sources, so older baselines aren't comparable
 const STORE_KEY = "ipo-radar:gmp-v3";
@@ -275,6 +276,7 @@ export default function Dashboard() {
               </p>
             </div>
           </div>
+          <TopNav active="ipos" />
           <div className="top-right">
             {data && (
               <span

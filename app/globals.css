@@ -160,6 +160,12 @@ h1 { margin: 0; font-size: 26px; line-height: 1.1; letter-spacing: -0.03em; font
 .count.upcoming { color: var(--cyan-ink); background: color-mix(in oklab, var(--cyan) 14%, transparent); }
 
 .top-right { display: flex; align-items: center; gap: 12px; }
+.topnav { margin-right: auto; margin-left: 12px; }
+.topnav a {
+  position: relative; text-decoration: none; border-radius: 999px; padding: 7px 18px;
+  font-weight: 600; color: var(--muted); transition: color 180ms var(--ease);
+}
+.topnav a:hover, .topnav a.on { color: var(--text); }
 .status { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
 .status i { width: 8px; height: 8px; border-radius: 50%; background: var(--emerald); position: relative; }
 .status.ok i::after {
@@ -456,6 +462,57 @@ h1 { margin: 0; font-size: 26px; line-height: 1.1; letter-spacing: -0.03em; font
 .sk.bar { height: 40px; width: 320px; max-width: 100%; margin: 30px 0 12px; border-radius: 999px; }
 .sk.line { height: 76px; margin-top: 8px; }
 
+/* ---------- stocks page ---------- */
+.pick-steady { --tile-bg: color-mix(in oklab, var(--emerald) 8%, var(--panel)); --tile-line: color-mix(in oklab, var(--emerald) 26%, var(--line)); --tile-hover: color-mix(in oklab, var(--emerald) 55%, var(--line)); --tile-glow: color-mix(in oklab, var(--emerald) 26%, transparent); --tile-ink: var(--emerald-ink); }
+.year-dots { display: inline-grid; grid-template-columns: repeat(5, 12px); gap: 4px; padding: 0 6px; flex: none; }
+.year-dots i { width: 12px; height: 28px; border-radius: 4px; background: var(--panel-3); }
+.year-dots i.up { background: var(--emerald); }
+.year-dots i.down { background: var(--rose); }
+
+.filters { display: flex; align-items: center; gap: 12px 18px; flex-wrap: wrap; margin: -2px 0 12px; }
+.search {
+  display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; height: 38px; min-width: 260px;
+  border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--muted);
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease);
+}
+.search:focus-within { border-color: var(--saffron); box-shadow: var(--focus); }
+.search input { border: 0; outline: none; background: transparent; color: var(--text); font: inherit; width: 100%; }
+.search input::placeholder { color: var(--muted); }
+.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 550; font-size: 13.5px; }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch-track {
+  width: 38px; height: 22px; border-radius: 999px; padding: 3px; display: flex; flex: none;
+  background: var(--panel-3); border: 1px solid var(--line); transition: background-color 180ms var(--ease);
+}
+.switch input:checked + .switch-track { background: var(--emerald); border-color: transparent; justify-content: flex-end; }
+.switch input:focus-visible + .switch-track { box-shadow: var(--focus); }
+.switch-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--panel); box-shadow: var(--shadow-sm); }
+
+.list.stocks .row { grid-template-columns: 34px minmax(210px, 1.7fr) minmax(140px, 1fr) minmax(118px, .85fr) minmax(118px, .85fr) minmax(112px, .8fr) minmax(120px, .85fr) 20px; }
+.list.stocks.yby .row { grid-template-columns: 34px minmax(190px, 1.4fr) minmax(250px, 1.7fr) minmax(118px, .85fr) minmax(118px, .85fr) minmax(112px, .8fr) minmax(120px, .85fr) 20px; }
+.co { max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.years { display: grid !important; grid-template-columns: repeat(5, 1fr); gap: 4px !important; }
+.ycell {
+  display: grid; place-items: center; height: 30px; border-radius: 7px; font-size: 12px; font-weight: 700;
+  background: var(--panel-2); color: var(--text);
+}
+
+.ybars { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; height: 170px; }
+.ybar { display: grid; grid-template-rows: auto 1fr auto; gap: 4px; text-align: center; min-width: 0; }
+.ybar-val { font-size: 12px; font-weight: 700; }
+.ybar-track { position: relative; border-radius: 8px; background: var(--panel-3); overflow: hidden; }
+.ybar-track::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--line-strong); }
+.ybar-fill { position: absolute; left: 18%; right: 18%; border-radius: 5px; }
+.ybar-fill.up { bottom: 50%; background: var(--emerald); }
+.ybar-fill.down { top: 50%; background: var(--rose); }
+.ybar-label { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.pchart { margin: 0; }
+.pchart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.pchart figcaption { margin-top: 6px; }
+.sk.chart-sk { height: 150px; }
+.calc-note { margin: 14px 0 0; }
+
 /* ---------- responsive ---------- */
 @media (max-width: 1080px) {
   .picks, .sk-picks { grid-template-columns: 1fr 1fr; }
@@ -474,6 +531,9 @@ h1 { margin: 0; font-size: 26px; line-height: 1.1; letter-spacing: -0.03em; font
   }
   .score[data-l]::before, .gap[data-l]::before { display: none; }
   .past .row .name { grid-column: 1 / -1; }
+  .list.stocks .row, .list.stocks.yby .row { grid-template-columns: 30px 1fr 1fr 20px; }
+  .item > .row > .c-full { grid-column: 1 / -1; }
+  .search { min-width: 0; flex: 1 1 100%; }
   .past .row > .gap { grid-column: 1 / -1; }
   .detail { padding: 6px 16px 20px; }
   .cols { grid-template-columns: 1fr; gap: 24px; }

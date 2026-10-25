@@ -11,6 +11,8 @@ export async function GET() {
       {
         asOf: data.asOf,
         builtAt: data.builtAt,
+        market: data.market,
+        complete: data.complete,
         notes: data.notes,
         count: data.rows.length,
         // Score breakdowns come from /api/stocks/[symbol] to keep this list small
@@ -22,7 +24,12 @@ export async function GET() {
       },
       {
         // Prices only change once a day, so let Vercel's CDN serve a cached copy
-        headers: { "Cache-Control": "public, s-maxage=21600, stale-while-revalidate=86400" },
+        headers: {
+          "Cache-Control": data.complete
+            ? "public, s-maxage=21600, stale-while-revalidate=86400"
+            : // still downloading history: don't let the CDN hold the partial result
+              "public, s-maxage=60",
+        },
       },
     );
   } catch (e) {

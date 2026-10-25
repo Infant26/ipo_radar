@@ -67,6 +67,23 @@ export interface StockRow {
   longTerm: { score: number | null; verdict: StockVerdict | null; parts: ScorePart[] };
   shortTerm: { score: number | null; verdict: StockVerdict | null; parts: ScorePart[] };
   flags: StockFlag[];
+  /** Bull/bear rating and trade plans (filled in from daily prices) */
+  signal: SignalSummary | null;
+}
+
+export interface PlanSummary {
+  status: "buy" | "wait" | "watch" | "avoid";
+  headline: string;
+  entry: number | null;
+  stop: number | null;
+}
+
+export interface SignalSummary {
+  rating: "Buy" | "Overweight" | "Hold" | "Underweight" | "Sell";
+  regime: "Bull" | "Bear" | "Recovering" | "Weakening" | "Sideways" | null;
+  net: number;
+  swing: PlanSummary;
+  positional: PlanSummary;
 }
 
 export interface StockSeries {
@@ -362,6 +379,7 @@ export function computeStocks(
       longTerm: scoreOf(longParts, 0.6),
       shortTerm: scoreOf(shortParts, 0.6),
       flags,
+      signal: null,
     });
 
     series.set(symbol, {

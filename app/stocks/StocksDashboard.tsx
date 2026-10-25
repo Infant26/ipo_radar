@@ -18,6 +18,9 @@ import {
 import type { ScorePart, StockFlag, StockRow, StockVerdict } from "@/lib/stocks/compute";
 import { CountUp, EASE_OUT, Ring, SPRING, Seg } from "../ui";
 import TopNav from "../TopNav";
+import { MarketCard, SignalCell, SignalDetail } from "./Signals";
+import type { MarketSummary } from "@/lib/stocks/load";
+import type { Signal } from "@/lib/stocks/technical";
 
 type ListRow = Omit<StockRow, "longTerm" | "shortTerm"> & {
   longTerm: { score: number | null; verdict: StockVerdict | null };
@@ -29,6 +32,8 @@ interface ListResponse {
   notes: string[];
   count: number;
   rows: ListRow[];
+  market: MarketSummary | null;
+  complete: boolean;
   error?: string;
 }
 interface Detail {
@@ -36,10 +41,13 @@ interface Detail {
   adjustments: { exDate: string; factor: number; label: string }[];
   longTerm: { score: number | null; verdict: StockVerdict | null; parts: ScorePart[] };
   shortTerm: { score: number | null; verdict: StockVerdict | null; parts: ScorePart[] };
+  signal: Signal | null;
+  daily: { close: number[]; sma50: (number | null)[]; sma200: (number | null)[] } | null;
 }
 
 type Period = "1" | "2" | "3" | "4" | "5" | "yby";
-type RankBy = "return" | "long" | "short";
+type RankBy = "return" | "long" | "short" | "signal";
+type Trend = "all" | "bull" | "bear" | "mixed";
 
 const LONG_COLOR = "var(--emerald)";
 const SHORT_COLOR = "var(--saffron)";
@@ -71,6 +79,8 @@ export default function StocksDashboard() {
   const [period, setPeriod] = useState<Period>("1");
   const [rankBy, setRankBy] = useState<RankBy>("return");
   const [liquidOnly, setLiquidOnly] = useState(true);
+  const [trend, setTrend] = useState<Trend>("all");
+  const [buyZoneOnly, setBuyZoneOnly] = useState(false);
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const q = useDeferredValue(query.trim().toLowerCase());
@@ -100,8 +110,24 @@ export default function StocksDashboard() {
     return rows.filter((r) => r.dataOk && (!liquidOnly || (r.liquidityCr ?? 0) >= 1));
   }, [data, liquidOnly]);
 
+  const filtered = useMemo(
+    () =>
+      universe.filter((r) => {
+        const g = r.signal;
+        if (trend !== "all") {
+          if (!g?.regime) return false;
+          if (trend === "bull" && g.regime !== "Bull") return false;
+          if (trend === "bear" && g.regime !== "Bear") return false;
+          if (trend === "mixed" && (g.regime === "Bull" || g.regime === "Bear")) return false;
+        }
+        if (buyZoneOnly && g?.swing.status !== "buy" && g?.positional.status !== "buy") return false;
+        return true;
+      }),
+    [universe, trend, buyZoneOnly],
+  );
+
   const list = useMemo(() => {
-    let rows = universe;
+    let rows = filtered;
     if (q) rows = rows.filter((r) => r.symbol.toLowerCase().includes(q) || r.name.toLowerCase().includes(q));
     if (period === "yby") {
       rows = rows.filter((r) => r.years.filter((y) => y !== null).length >= 3);
@@ -109,6 +135,7 @@ export default function StocksDashboard() {
       rows = rows.filter((r) => r.cagr[+period - 1] !== null);
     }
     const sorted = [...rows].sort((a, b) => {
+      if (rankBy === "signal") return (b.signal?.net ?? -999) - (a.signal?.net ?? -999);
       if (rankBy === "long") return (b.longTerm.score ?? -1) - (a.longTerm.score ?? -1);
       if (rankBy === "short") return (b.shortTerm.score ?? -1) - (a.shortTerm.score ?? -1);
       if (period === "yby") {
@@ -119,7 +146,7 @@ export default function StocksDashboard() {
       return b.cagr[+period - 1]! - a.cagr[+period - 1]!;
     });
     return { total: rows.length, rows: sorted.slice(0, TOP_N) };
-  }, [universe, q, period, rankBy]);
+  }, [filtered, q, period, rankBy]);
 
   const picks = useMemo(() => {
     const best = (f: (r: ListRow) => number | null, pool = universe) =>
@@ -200,6 +227,8 @@ export default function StocksDashboard() {
 
         {data && (
           <>
+            {data.market && <MarketCard market={data.market} />}
+
             <section className="picks" aria-label="Top picks">
               {[
                 picks.long && {
@@ -323,6 +352,7 @@ export default function StocksDashboard() {
                     { value: "return", label: period === "yby" ? "Consistency" : "Return" },
                     { value: "long", label: "Long-term" },
                     { value: "short", label: "Short-term" },
+                    ...(data.complete ? [{ value: "signal" as const, label: "Signal" }] : []),
                   ]}
                 />
               </div>
@@ -346,9 +376,33 @@ export default function StocksDashboard() {
                 </span>
                 Liquid stocks only <span className="muted">(₹1 Cr+ traded a day)</span>
               </label>
+              {data.complete && (
+                <>
+                  <Seg
+                    id="trend"
+                    label="Trend"
+                    size="sm"
+                    value={trend}
+                    onChange={setTrend}
+                    options={[
+                      { value: "all", label: "All trends" },
+                      { value: "bull", label: "Bull" },
+                      { value: "mixed", label: "Mixed" },
+                      { value: "bear", label: "Bear" },
+                    ]}
+                  />
+                  <label className="switch">
+                    <input type="checkbox" checked={buyZoneOnly} onChange={(e) => setBuyZoneOnly(e.target.checked)} />
+                    <span className="switch-track" aria-hidden>
+                      <motion.span className="switch-thumb" layout transition={SPRING} />
+                    </span>
+                    In a buy zone now
+                  </label>
+                </>
+              )}
               <span className="muted small">
                 Top {Math.min(TOP_N, list.total)} of {list.total.toLocaleString("en-IN")} by{" "}
-                {rankBy === "return" ? (period === "yby" ? "consistency" : periodLabel) : rankBy === "long" ? "long-term score" : "short-term score"}
+                {rankBy === "return" ? (period === "yby" ? "consistency" : periodLabel) : rankBy === "long" ? "long-term score" : rankBy === "signal" ? "bull vs bear signal" : "short-term score"}
               </span>
             </div>
 
@@ -363,7 +417,7 @@ export default function StocksDashboard() {
                 )}
                 <span>Long-term</span>
                 <span>Short-term</span>
-                <span className="r">Risk</span>
+                <span>Signal</span>
                 <span className="r">Price · Liquidity</span>
                 <span />
               </div>
@@ -414,6 +468,18 @@ export default function StocksDashboard() {
                 </p>
               </div>
               <div>
+                <h2>Bull vs bear signals</h2>
+                <p>
+                  Adapted from{" "}
+                  <a href="https://github.com/TauricResearch/TradingAgents" target="_blank" rel="noreferrer">
+                    TradingAgents
+                  </a>{" "}
+                  (Tauric Research, Apache-2.0) as fixed rules, with no AI calls. Its technical analyst’s indicators
+                  (50/200-day SMA, 10-day EMA, MACD, RSI 70/30, Bollinger, ATR, VWMA) build a bull case and a bear case;
+                  their balance sets a rating on its five-step scale; risk checks cap it in a bear market or for
+                  illiquid or very volatile stocks; and the trade plans set the stop 2x (swing) or 3x (positional) the
+                  daily range below entry. Its news, sentiment and fundamentals analysts aren’t included.
+                </p>
                 <h2>Before you act on it</h2>
                 <p>
                   Both scores use price history only. They don’t look at the business (profits, debt, valuation), and
@@ -560,10 +626,7 @@ function StockItem({ row: r, rank, index, period, open, onToggle }: {
         )}
         <MiniScore label="Long-term" score={r.longTerm.score} verdict={r.longTerm.verdict} color={LONG_COLOR} delay={0.12 + d} className="c-a" />
         <MiniScore label="Short-term" score={r.shortTerm.score} verdict={r.shortTerm.verdict} color={SHORT_COLOR} delay={0.18 + d} className="c-b" />
-        <div className="r c-a" data-l="Risk">
-          <span className="num">{r.vol !== null ? `${(r.vol * 100).toFixed(0)}% vol` : NA}</span>
-          <span className="num small muted nowrap">{r.maxDD !== null ? `worst drop ${pct(r.maxDD, 0)}` : ""}</span>
-        </div>
+        <SignalCell s={r.signal} className="c-a" delay={0.2 + d} />
         <div className="r c-b" data-l="Price · Liquidity">
           <span className="num">{inr(r.price)}</span>
           <span className={`num small nowrap ${r.liquidityCr !== null && r.liquidityCr < 1 ? "neg" : "muted"}`}>
@@ -636,6 +699,8 @@ function StockDetail({ row: r }: { row: ListRow }) {
           ))}
         </div>
       )}
+
+      {detail?.signal && <SignalDetail signal={detail.signal} daily={detail.daily} />}
 
       <div className="cols">
         <div>

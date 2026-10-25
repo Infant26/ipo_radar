@@ -22,7 +22,12 @@ export const fromIso = (s: string) => new Date(`${s}T00:00:00Z`);
 export const istToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
 
 export interface DayRow {
+  open: number;
+  high: number;
+  low: number;
   close: number;
+  /** shares traded */
+  volume: number;
   /** traded value in ₹ */
   value: number;
   series: string;
@@ -58,6 +63,10 @@ function parseBhav(csv: string): Map<string, DayRow> {
   const ser = col("SctySrs", "SERIES");
   const cls = col("ClsPric", "CLOSE");
   const val = col("TtlTrfVal", "TOTTRDVAL");
+  const opn = col("OpnPric", "OPEN");
+  const hgh = col("HghPric", "HIGH");
+  const low = col("LwPric", "LOW");
+  const vol = col("TtlTradgVol", "TOTTRDQTY");
   if (sym < 0 || ser < 0 || cls < 0) throw new Error("unexpected bhavcopy format");
   const rows = new Map<string, DayRow>();
   for (let i = 1; i < lines.length; i++) {
@@ -66,7 +75,15 @@ function parseBhav(csv: string): Map<string, DayRow> {
     if (!series || !KEEP_SERIES.has(series)) continue;
     const close = Number(c[cls]);
     if (!(close > 0)) continue;
-    rows.set(c[sym].trim(), { close, value: Number(c[val]) || 0, series });
+    rows.set(c[sym].trim(), {
+      open: Number(c[opn]) || close,
+      high: Number(c[hgh]) || close,
+      low: Number(c[low]) || close,
+      close,
+      volume: Number(c[vol]) || 0,
+      value: Number(c[val]) || 0,
+      series,
+    });
   }
   return rows;
 }
@@ -203,6 +220,46 @@ export async function fetchNames(): Promise<Map<string, { name: string; industry
       const cur = out.get(sym);
       if (cur) out.set(sym, { ...cur, name: cur.name || name, industry: industry || null });
     }
+  }
+  return out;
+}
+
+// ---------- index closes ----------
+
+export interface IndexRow {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  pe: number | null;
+  pb: number | null;
+}
+
+/** NSE's daily index file (every index's OHLC, plus P/E and P/B), or null on a holiday. */
+export async function fetchIndexDay(iso: string): Promise<Map<string, IndexRow> | null> {
+  if ([0, 6].includes(fromIso(iso).getUTCDay())) return null;
+  const [y, m, d] = iso.split("-");
+  const recent = iso >= toIso(new Date(Date.now() - 3 * 86400_000));
+  const res = await fetch(`${ARCHIVES}/content/indices/ind_close_all_${d}${m}${y}.csv`, {
+    next: { revalidate: recent ? 1800 : YEAR },
+    signal: AbortSignal.timeout(15000),
+    headers: { "User-Agent": UA, Referer: `${NSE}/` },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`index file HTTP ${res.status}`);
+  const out = new Map<string, IndexRow>();
+  for (const c of csvRows(await res.text()).slice(1)) {
+    const num = (v: string | undefined) => (v && v !== "-" && !isNaN(Number(v)) ? Number(v) : null);
+    const close = num(c[5]);
+    if (!c[0] || close === null) continue;
+    out.set(c[0].trim().toUpperCase(), {
+      open: num(c[2]) ?? close,
+      high: num(c[3]) ?? close,
+      low: num(c[4]) ?? close,
+      close,
+      pe: num(c[10]),
+      pb: num(c[11]),
+    });
   }
   return out;
 }

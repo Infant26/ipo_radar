@@ -291,7 +291,7 @@ function DailyChart({ daily, plan }: { daily: { close: number[]; sma50: (number 
   const line = (v: number, cls: string, label: string) => (
     <g className={cls}>
       <line x1={P} x2={W - P} y1={Y(v)} y2={Y(v)} />
-      <text x={W - P} y={Y(v) - 4} textAnchor="end">
+      <text x={P + 4} y={Y(v) - 4} textAnchor="start">
         {label} {inr(v)}
       </text>
     </g>

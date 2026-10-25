@@ -604,7 +604,10 @@ h1 { margin: 0; font-size: 26px; line-height: 1.1; letter-spacing: -0.03em; font
 .dchart .l200 { stroke: var(--cyan); stroke-width: 1.8; }
 .dchart .zone { fill: color-mix(in oklab, var(--emerald) 16%, transparent); }
 .dchart .lv line { stroke-width: 1.2; stroke-dasharray: 4 4; }
-.dchart .lv text { font-size: 10px; font-weight: 600; font-family: var(--font-mono), monospace; }
+.dchart .lv text {
+  font-size: 10px; font-weight: 600; font-family: var(--font-mono), monospace;
+  paint-order: stroke; stroke: var(--panel-2); stroke-width: 3px; stroke-linejoin: round;
+}
 .dchart .entry line { stroke: var(--emerald); }
 .dchart .entry text { fill: var(--emerald-ink); }
 .dchart .stop line { stroke: var(--rose); }

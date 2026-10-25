@@ -1,6 +1,6 @@
 import { computeStocks, type StockRow, type StockSeries } from "./compute";
 import { loadDaily, type IndexSeries } from "./daily";
-import { dayOnOrBefore, fetchAdjustments, fetchNames, fromIso, istToday, toIso, type Day } from "./nse";
+import { dayOnOrBefore, fetchAdjustments, fetchDay, fetchNames, fromIso, istToday, toIso, type Day } from "./nse";
 import { analyse, indicators, regimeOf, type Bars, type Regime, type Signal } from "./technical";
 
 export interface IndexState {
@@ -133,8 +133,47 @@ export async function loadStocks(): Promise<StockData> {
   return inflight;
 }
 
-async function build(): Promise<StockData> {
-  const latest = await dayOnOrBefore(istToday());
+/** Result of an explicit refresh: did NSE have a newer trading day than the one shown? */
+export interface RefreshResult {
+  data: StockData;
+  updated: boolean;
+  checkedAt: string;
+}
+
+let lastCheck: { at: number; asOf: string } | null = null;
+const CHECK_EVERY_MS = 2 * 60_000;
+
+/**
+ * Ask NSE directly (no cache) whether a newer day's prices than the current ones exist,
+ * and rebuild with it if so. Only the weekdays after the last known date are checked
+ * (usually one request), and repeat clicks within two minutes reuse the last answer.
+ */
+export async function refreshStocks(): Promise<RefreshResult> {
+  const current = await loadStocks();
+  const now = Date.now();
+  if (lastCheck && lastCheck.asOf === current.asOf && now - lastCheck.at < CHECK_EVERY_MS) {
+    return { data: current, updated: false, checkedAt: new Date(lastCheck.at).toISOString() };
+  }
+  // Weekdays after the current date, newest first, up to today (IST)
+  const candidates: string[] = [];
+  for (let d = fromIso(istToday()); toIso(d) > current.asOf && candidates.length < 7; d = new Date(d.getTime() - 86400_000)) {
+    if (![0, 6].includes(d.getUTCDay())) candidates.push(toIso(d));
+  }
+  let newer: Day | null = null;
+  for (const iso of candidates) {
+    newer = await fetchDay(iso, { fresh: true }).catch(() => null);
+    if (newer) break;
+  }
+  lastCheck = { at: now, asOf: newer?.date ?? current.asOf };
+  if (!newer) return { data: current, updated: false, checkedAt: new Date(now).toISOString() };
+
+  if (!inflight) inflight = build(newer).finally(() => (inflight = null));
+  const data = await inflight;
+  return { data, updated: data.asOf !== current.asOf, checkedAt: new Date(now).toISOString() };
+}
+
+async function build(latestHint?: Day): Promise<StockData> {
+  const latest = latestHint ?? (await dayOnOrBefore(istToday()));
   if (!latest) throw new Error("Couldn't find a recent NSE price file");
   if (memo?.key === latest.date && memo.data.complete && Date.now() - memo.at < 12 * 3600_000) return memo.data;
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, LayoutGroup, MotionConfig, motion, useReducedMotion } from "motion/react";
 import {
   ArrowSquareOut,
@@ -14,6 +14,8 @@ import {
   TrendUp,
   Warning,
   WarningCircle,
+  CheckCircle,
+  Clock,
 } from "@phosphor-icons/react";
 import type { ScorePart, StockFlag, StockRow, StockVerdict } from "@/lib/stocks/compute";
 import { CountUp, EASE_OUT, Ring, SPRING, Seg } from "../ui";
@@ -34,6 +36,8 @@ interface ListResponse {
   rows: ListRow[];
   market: MarketSummary | null;
   complete: boolean;
+  /** present on a Refresh: whether NSE had newer prices */
+  check?: { updated: boolean; checkedAt: string } | null;
   error?: string;
 }
 interface Detail {
@@ -86,14 +90,32 @@ export default function StocksDashboard() {
   const q = useDeferredValue(query.trim().toLowerCase());
   const reduce = useReducedMotion();
 
-  const load = useCallback(async () => {
+  const [toast, setToast] = useState<{ text: string; updated: boolean } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  /** Page load uses the cached copy; the Refresh button asks NSE for newer prices first. */
+  const load = useCallback(async (manual = false) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/stocks");
+      const res = await fetch(manual ? `/api/stocks?refresh=${Date.now()}` : "/api/stocks", {
+        cache: manual ? "no-store" : "default",
+      });
       const json = (await res.json()) as ListResponse;
       if (!res.ok || json.error) throw new Error(json.error ?? `Request failed (${res.status})`);
       setData(json);
+      if (manual && json.check) {
+        setToast(
+          json.check.updated
+            ? { text: `Updated to ${fmtDay(json.asOf)} closing prices`, updated: true }
+            : {
+                text: `No newer prices yet. Showing ${fmtDay(json.asOf)}; NSE usually publishes around 6-7 pm IST`,
+                updated: false,
+              },
+        );
+        clearTimeout(toastTimer.current);
+        toastTimer.current = setTimeout(() => setToast(null), 5000);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -193,7 +215,7 @@ export default function StocksDashboard() {
           <div className="top-right">
             <motion.button
               className="refresh"
-              onClick={load}
+              onClick={() => load(true)}
               disabled={loading}
               whileHover={reduce ? undefined : { y: -1 }}
               whileTap={{ scale: 0.97 }}
@@ -211,7 +233,7 @@ export default function StocksDashboard() {
             <div>
               <strong>Couldn’t load stock data.</strong> {error}
             </div>
-            <button className="text-btn" onClick={load}>
+            <button className="text-btn" onClick={() => load(true)}>
               Try again
             </button>
           </div>
@@ -497,6 +519,21 @@ export default function StocksDashboard() {
             </footer>
           </>
         )}
+        <AnimatePresence>
+          {toast && (
+            <motion.div
+              className="toast"
+              role="status"
+              initial={{ opacity: 0, y: 24, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.98 }}
+              transition={SPRING}
+            >
+              {toast.updated ? <CheckCircle size={18} weight="fill" /> : <Clock size={18} weight="fill" />}
+              {toast.text}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
     </MotionConfig>
   );

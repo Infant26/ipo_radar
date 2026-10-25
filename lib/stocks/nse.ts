@@ -34,9 +34,9 @@ export interface DayRow {
 }
 export type Day = { date: string; rows: Map<string, DayRow> };
 
-async function fetchBytes(url: string, revalidate: number, timeoutMs = 15000): Promise<Uint8Array | null> {
+async function fetchBytes(url: string, revalidate: number | "no-store", timeoutMs = 15000): Promise<Uint8Array | null> {
   const res = await fetch(url, {
-    next: { revalidate },
+    ...(revalidate === "no-store" ? { cache: "no-store" as const } : { next: { revalidate } }),
     signal: AbortSignal.timeout(timeoutMs),
     headers: { "User-Agent": UA, Referer: `${NSE}/` },
   });
@@ -89,11 +89,12 @@ function parseBhav(csv: string): Map<string, DayRow> {
 }
 
 /** One trading day's closes, or null if the market was shut that day. */
-export async function fetchDay(iso: string): Promise<Day | null> {
+export async function fetchDay(iso: string, opts: { fresh?: boolean } = {}): Promise<Day | null> {
   if ([0, 6].includes(fromIso(iso).getUTCDay())) return null; // weekend
   // Past files never change; today's may not be published yet, so re-check it often.
+  // `fresh` skips the cache entirely, for an explicit "is there a newer day?" check.
   const recent = iso >= toIso(new Date(Date.now() - 3 * 86400_000));
-  const zip = await fetchBytes(bhavUrl(iso), recent ? 1800 : YEAR);
+  const zip = await fetchBytes(bhavUrl(iso), opts.fresh ? "no-store" : recent ? 1800 : YEAR);
   if (!zip) return null;
   const files = unzipSync(zip);
   const name = Object.keys(files).find((f) => f.toLowerCase().endsWith(".csv"));
